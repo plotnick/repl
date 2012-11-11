@@ -23,8 +23,7 @@
   "Define a command for each keyword in KEYWORDS.  KEYWORDS is a
 designator for a list of symbols.  CODE is treated as the body of a
 lambda expression invoked when the input to the REPL begins with any
-keyword in KEYWORDS.  Commands should emit output to *COMMAND-OUTPUT*.
-Commands do not return values, and don't compose.  Sorry."
+keyword in KEYWORDS.  Commands should emit output to *COMMAND-OUTPUT*."
   (setq keywords (if (listp keywords) keywords (list keywords)))
   (let ((keyword (gensym)))
     `(dolist (,keyword ',keywords ',keywords)
@@ -135,13 +134,16 @@ whitespace, return NIL."
     ;; dynamic column number based on the length of the prompt string.
     (write-char #\return)
     (if (keywordp thing)
-        (with-input-from-string (*standard-input*
-                                 (with-output-to-string (*command-output*)
-                                   (run-command thing)))
-          (loop for line = (read-line nil nil)
-                while line
-                do (format *command-output* "; ~A~%" line))
-          (values))
+        (let ((results))
+         (with-input-from-string (*standard-input*
+                                  (with-output-to-string (*command-output*)
+                                    (setq results
+                                          (multiple-value-list
+                                           (run-command thing)))))
+           (loop for line = (read-line nil nil)
+                 while line
+                 do (format *command-output* "; ~A~%" line))
+           (values-list results)))
         thing)))
 
 (defun use-repl ()
@@ -154,55 +156,24 @@ whitespace, return NIL."
   (setf sb-int:*repl-prompt-fun*  'sb-impl::repl-prompt-fun
         sb-int:*repl-read-form-fun* 'sb-impl::repl-read-form-fun))
 
-;;; CLSQL stuff.
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (ignore-errors (require 'clsql)))
+;;; CLWEB stuff.
+(defvar *last-loaded-web* nil)
+(defcmd :lw
+    (handler-bind ((style-warning #'muffle-warning))
+     (clweb:load-web
+      (setq *last-loaded-web*
+            (pathname (read-stringy-argument nil *last-loaded-web*))))))
 
-;; Accumulate 1 string upto a semicolon, ensuring that semicolons
-;; inside quoted tokens don't count.
-(defun read-sql-query ()
-  (peek-char t)
-  (with-output-to-string (*standard-output*)
-    (let ((*standard-input* (make-echo-stream
-                             *standard-input* *standard-output*)))
-      (loop for char = (read-char)
-            when (member char '(#\' #\"))
-              do (loop with delimiter = char
-                       for char = (read-char)
-                       until (char= char delimiter)
-                       ;; standard SQL doesn't support backslash
-                       ;; escaping, but oh well...
-                       when (char= char #\\)
-                         do (read-char))
-            when (char= char #\;)
-              return nil))))
+(defvar *last-tangled-file* nil)
+(defcmd :tf
+    (handler-bind ((style-warning #'muffle-warning))
+     (clweb:tangle-file
+      (setq *last-tangled-file*
+            (pathname (read-stringy-argument nil *last-tangled-file*))))))
 
-;; This is slightly sleazy, but ought to be harmless: my hacked-up
-;; ASDF systems always PROVIDE their own names.  So if vanilla CLSQL
-;; doesn't do that, no harm should come of it.
-#+#.(cl:if (cl:member "CLSQL" cl:*modules* :test 'cl:equalp) :t :nil)
-(defcmd :select
-    (format *command-output*
-            "~{~S~^~%~}~%"
-            (multiple-value-list
-             (clsql:query (format nil "select ~A" (read-sql-query))))))
-
-#+#.(cl:if (cl:member "CLSQL" cl:*modules* :test 'cl:equalp) :t :nil)
-(macrolet ((execute (name)
-             `(defcmd ,name
-                 (format *command-output*
-                         "~{~S~^~%~}~%"
-                         (multiple-value-list
-                          (clsql:execute-command
-                           (format nil ,(format nil "~A ~~A" name)
-                                   (read-sql-query))))))))
-  (execute :insert)
-  (execute :update)
-  (execute :delete)
-  (execute :begin)
-  (execute :commit)
-  (execute :rollback))
-
-
-
-
+(defvar *last-woven-file* nil)
+(defcmd :we
+    (handler-bind ((style-warning #'muffle-warning))
+      (clweb:weave
+       (setq *last-woven-file*
+             (pathname (read-stringy-argument nil *last-woven-file*))))))
