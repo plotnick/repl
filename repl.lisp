@@ -38,8 +38,8 @@ keyword in KEYWORDS.  Commands should emit output to *COMMAND-OUTPUT*."
 whitespace, return NIL."
   (loop for char = (read-char)
         do (case char
-             ((#\space #\tab))
-             (#\newline (return nil))
+             ((#\Space #\Tab))
+             (#\Newline (return nil))
              (otherwise (unread-char char) (return char)))))
 
 ;; The universal translator for all your lettercase needs.  Note that
@@ -78,7 +78,7 @@ whitespace, return NIL."
     (otherwise (with-output-to-string (*standard-output*)
                  (loop for char = (read-char nil nil)
                        until (or (null char)
-                                 (member char '(#\space #\newline)))
+                                 (member char '(#\Space #\Newline)))
                        do (write-char char))))))
 
 (defcmd :cd
@@ -129,7 +129,7 @@ whitespace, return NIL."
     ;; Wart/flaw/the-universe-sucks: if we don't force the output
     ;; stream back to column 0, the pretty-printer will start at some
     ;; dynamic column number based on the length of the prompt string.
-    (write-char #\return)
+    (write-char #\Return)
     (if (keywordp thing)
         (let ((results))
          (with-input-from-string (*standard-input*
