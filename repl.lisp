@@ -1,22 +1,20 @@
 ;;;; -*- Mode: Lisp; Syntax: ANSI-Common-Lisp; Base: 10 -*-
-;;;; 
-;;;; rkrepl.lisp: My REPL.  Inspired by sb-aclrepl, sorta, but
-;;;; slightly more dynamically implemented.
-;;;; 
-;;;; Copyright 2009, Richard M Kreuter <kreuter@progn.net>
-;;;; 
-;;;; Time-stamp: <2009-02-19 08:54:52 kreuter>
+;;;;
+;;;; An interactive REPL.
+;;;; Based on rkrepl by Richard M Kreuter <kreuter@progn.net>.
+;;;;
 
-(defpackage "RKREPL"
+(defpackage "REPL"
   (:use "COMMON-LISP")
   (:export "USE-REPL"
            "UNUSE-REPL"
            "DEFCMD"
            "*COMMAND-OUTPUT*"))
 
-(in-package "RKREPL")
+(in-package "REPL")
 
-(defvar *command-output* (make-synonym-stream '*standard-output*))
+(defvar *command-output* (make-synonym-stream '*standard-output*)
+  "Output stream for top-level commands.")
 
 ;; Todo: commands should be made able to document themselves.
 (defmacro defcmd (keywords &body code)
@@ -121,13 +119,13 @@ whitespace, return NIL."
 (defun run-command (keyword)
   (funcall (get keyword 'command)))
 
-(defun rkrepl-prompt-fun (*standard-output*)
+(defun prompt (*standard-output*)
   (format t "~&~A> "
           (first (sort (cons (package-name *package*)
                              (package-nicknames *package*))
                        '< :key 'length))))
 
-(defun rkrepl-read-form-fun (*standard-input* *standard-output*)
+(defun read-form (*standard-input* *standard-output*)
   (let ((thing (read-preserving-whitespace)))
     ;; Wart/flaw/the-universe-sucks: if we don't force the output
     ;; stream back to column 0, the pretty-printer will start at some
@@ -149,11 +147,11 @@ whitespace, return NIL."
 (defun use-repl ()
   ;; FIXME: also define a repl-fun-generator function for threaded
   ;; Lisps.
-  (setf sb-int:*repl-prompt-fun* 'rkrepl-prompt-fun
-        sb-int:*repl-read-form-fun* 'rkrepl-read-form-fun))
+  (setf sb-int:*repl-prompt-fun* 'prompt
+        sb-int:*repl-read-form-fun* 'read-form))
 
 (defun unuse-repl ()
-  (setf sb-int:*repl-prompt-fun*  'sb-impl::repl-prompt-fun
+  (setf sb-int:*repl-prompt-fun* 'sb-impl::repl-prompt-fun
         sb-int:*repl-read-form-fun* 'sb-impl::repl-read-form-fun))
 
 ;;; CLWEB stuff.
