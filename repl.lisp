@@ -9,29 +9,22 @@
   (:export "USE-REPL"
            "UNUSE-REPL"
            "DEFCMD"
-           "*COMMAND-OUTPUT*"))
+           "*COMMAND-OUTPUT*"
+           "*COMMAND-CHAR*"
+           "*COMMAND-PACKAGES*"))
 
 (in-package "REPL")
 
 (defvar *command-output* (make-synonym-stream '*standard-output*)
   "Output stream for top-level commands.")
 
-;; Todo: commands should be made able to document themselves.
-(defmacro defcmd (keywords &body code)
-  "Define a command for each keyword in KEYWORDS.  KEYWORDS is a
-designator for a list of symbols.  CODE is treated as the body of a
-lambda expression invoked when the input to the REPL begins with any
-keyword in KEYWORDS.  Commands should emit output to *COMMAND-OUTPUT*."
-  (setq keywords (if (listp keywords) keywords (list keywords)))
-  (let ((keyword (gensym)))
-    `(dolist (,keyword ',keywords ',keywords)
-       (setf (get ,keyword 'command)
-             ,(typecase code
-                ;; note: the first two typecases aren't documented,
-                ;; and should maybe not be supported.
-                ((cons symbol null) (list 'quote code))
-                ((cons (cons (member function lambda) *) *) code)
-                (t `(lambda () ,@code)))))))
+(defmacro defcmd (name &rest args)
+  "Define a command for the top-level repl.
+
+This just defines a zero-argument function named NAME. Commands should
+emit output to *COMMAND-OUTPUT*, and may read from *STANDARD-INPUT* to
+obtain user input."
+  `(defun ,name () ,@args))
 
 (defun peek-to-newline ()
   "Like PEEK-CHAR, but if a #\Newline is seen in the initial
@@ -81,33 +74,33 @@ whitespace, return NIL."
                                  (member char '(#\Space #\Newline)))
                        do (write-char char))))))
 
-(defcmd :cd
+(defcmd cd
     (let ((pathname (pathname
                      (read-stringy-argument nil (user-homedir-pathname)))))
       (format *command-output* "Default pathname: ~A"
               (setf *default-pathname-defaults* pathname))))
 
 (defvar *last-compiled-file* nil)
-(defcmd :cc
+(defcmd cc
     (compile-file
      (setq *last-compiled-file*
            (pathname (read-stringy-argument nil *last-compiled-file*)))))
 
 (defvar *last-loaded-file* nil)
-(defcmd :ld
+(defcmd ld
     (load
      (setq *last-loaded-file*
            (pathname (read-stringy-argument nil *last-loaded-file*)))))
 
-(defcmd :re 
+(defcmd re 
     (let ((module (internalize-string (read-stringy-argument))))
       (format *command-output*
               "~:[~;~&Module ~A loaded.~%~]"  (require module) module)))
 
-(defcmd :rm
+(defcmd rm
     (delete-file (pathname (read-stringy-argument))))
 
-(defcmd :pa
+(defcmd pa
     (let* ((name (internalize-string (read-stringy-argument nil "cl-user")))
            (package (find-package name)))
       (if package
@@ -115,8 +108,16 @@ whitespace, return NIL."
                   (package-name (setf *package* package)))
           (error "No package named ~A exists." name))))
 
-(defun run-command (keyword)
-  (funcall (get keyword 'command)))
+(defun run-command (command)
+  (let ((results))
+    (with-input-from-string (*standard-input*
+                             (with-output-to-string (*command-output*)
+                               (setq results (multiple-value-list
+                                              (funcall command)))))
+      (loop for line = (read-line nil nil)
+            while line
+            do (format *command-output* "; ~A~%" line))
+      (values-list results))))
 
 (defun prompt (*standard-output*)
   (format t "~&~A> "
@@ -124,24 +125,37 @@ whitespace, return NIL."
                              (package-nicknames *package*))
                        '< :key 'length))))
 
+(defvar *command-char* #\:
+  "Character that begins REPL command line.")
+
+(defvar *command-packages* (list #.(find-package *package*))
+  "List of packages in which to search for commands.")
+
+(define-condition command-not-found (error)
+  ((name :reader command-name :initarg :name)))
+
+(defun find-command (name &optional (not-found-error-p t) &aux
+                     (name (string name)))
+  (or (loop for package in *command-packages*
+            thereis (let ((symbol (find-symbol name (find-package package))))
+                      (when (fboundp symbol) symbol)))
+      (and not-found-error-p (error 'command-not-found :name name))))
+
 (defun read-form (*standard-input* *standard-output*)
-  (let ((thing (read-preserving-whitespace)))
-    ;; Wart/flaw/the-universe-sucks: if we don't force the output
-    ;; stream back to column 0, the pretty-printer will start at some
-    ;; dynamic column number based on the length of the prompt string.
-    (write-char #\Return)
-    (if (keywordp thing)
-        (let ((results))
-         (with-input-from-string (*standard-input*
-                                  (with-output-to-string (*command-output*)
-                                    (setq results
-                                          (multiple-value-list
-                                           (run-command thing)))))
-           (loop for line = (read-line nil nil)
-                 while line
-                 do (format *command-output* "; ~A~%" line))
-           (values-list results)))
-        thing)))
+  (cond ((prog1 (char= (peek-char t) *command-char*)
+           ;; Wart/flaw/the-universe-sucks: if we don't force the output
+           ;; stream back to column 0, the pretty-printer will start at some
+           ;; dynamic column number based on the length of the prompt string.
+           (terpri))
+         (read-char)
+         (let ((name (let ((*package* (find-package "KEYWORD")))
+                       (symbol-name (read-preserving-whitespace)))))
+           (run-command (or (find-command name nil)
+                            (lambda ()
+                              (format *command-output*
+                                      "Command not found: ~A~%" name)
+                              (values))))))
+        (t (read-preserving-whitespace))))
 
 (defun use-repl ()
   ;; FIXME: also define a repl-fun-generator function for threaded Lisps.
@@ -166,21 +180,21 @@ whitespace, return NIL."
 #+#.(cl:if (cl:member "CLWEB" cl:*modules* :test 'cl:equalp) '(cl:and) '(cl:or))
 (progn
   (defvar *last-loaded-web* nil)
-  (defcmd :lw
+  (defcmd lw
       (handler-bind ((style-warning #'muffle-warning))
         (clweb:load-web
          (setq *last-loaded-web*
                (pathname (read-stringy-argument nil *last-loaded-web*))))))
 
   (defvar *last-tangled-file* nil)
-  (defcmd :tf
+  (defcmd tf
       (handler-bind ((style-warning #'muffle-warning))
         (clweb:tangle-file
          (setq *last-tangled-file*
                (pathname (read-stringy-argument nil *last-tangled-file*))))))
 
   (defvar *last-woven-file* nil)
-  (defcmd :we
+  (defcmd we
       (handler-bind ((style-warning #'muffle-warning))
         (clweb:weave
          (setq *last-woven-file*
