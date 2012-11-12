@@ -163,23 +163,25 @@ whitespace, return NIL."
   (values))
 
 ;;; CLWEB stuff.
-(defvar *last-loaded-web* nil)
-(defcmd :lw
-    (handler-bind ((style-warning #'muffle-warning))
-     (clweb:load-web
-      (setq *last-loaded-web*
-            (pathname (read-stringy-argument nil *last-loaded-web*))))))
+#+#.(cl:if (cl:member "CLWEB" cl:*modules* :test 'cl:equalp) '(cl:and) '(cl:or))
+(progn
+  (defvar *last-loaded-web* nil)
+  (defcmd :lw
+      (handler-bind ((style-warning #'muffle-warning))
+        (clweb:load-web
+         (setq *last-loaded-web*
+               (pathname (read-stringy-argument nil *last-loaded-web*))))))
 
-(defvar *last-tangled-file* nil)
-(defcmd :tf
-    (handler-bind ((style-warning #'muffle-warning))
-     (clweb:tangle-file
-      (setq *last-tangled-file*
-            (pathname (read-stringy-argument nil *last-tangled-file*))))))
+  (defvar *last-tangled-file* nil)
+  (defcmd :tf
+      (handler-bind ((style-warning #'muffle-warning))
+        (clweb:tangle-file
+         (setq *last-tangled-file*
+               (pathname (read-stringy-argument nil *last-tangled-file*))))))
 
-(defvar *last-woven-file* nil)
-(defcmd :we
-    (handler-bind ((style-warning #'muffle-warning))
-      (clweb:weave
-       (setq *last-woven-file*
-             (pathname (read-stringy-argument nil *last-woven-file*))))))
+  (defvar *last-woven-file* nil)
+  (defcmd :we
+      (handler-bind ((style-warning #'muffle-warning))
+        (clweb:weave
+         (setq *last-woven-file*
+               (pathname (read-stringy-argument nil *last-woven-file*)))))))
