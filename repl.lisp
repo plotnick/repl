@@ -152,14 +152,16 @@ whitespace, return NIL."
                     (setf (get ,symbol ',var) ,var))
                   (setf ,var ,symbol))))
     (save-and-set sb-int:*repl-prompt-fun* 'prompt)
-    (save-and-set sb-int:*repl-read-form-fun* 'read-form)))
+    (save-and-set sb-int:*repl-read-form-fun* 'read-form))
+  (values))
 
 (defun unuse-repl ()
   (macrolet ((restore (var symbol)
                `(setf ,var (get ,symbol ',var)
                       (get ,symbol ',var) nil)))
     (restore sb-int:*repl-prompt-fun* 'prompt)
-    (restore sb-int:*repl-read-form-fun* 'read-form)))
+    (restore sb-int:*repl-read-form-fun* 'read-form))
+  (values))
 
 ;;; CLWEB stuff.
 (defvar *last-loaded-web* nil)
