@@ -18,13 +18,18 @@
 (defvar *command-output* (make-synonym-stream '*standard-output*)
   "Output stream for top-level commands.")
 
+(defvar *registered-commands* nil
+  "List of names of all known commands.")
+
 (defmacro defcmd (name &rest args)
   "Define a command for the top-level repl.
 
 This just defines a zero-argument function named NAME. Commands should
 emit output to *COMMAND-OUTPUT*, and may read from *STANDARD-INPUT* to
 obtain user input."
-  `(defun ,name () ,@args))
+  `(progn
+     (pushnew ',name *registered-commands*)
+     (defun ,name () ,@args)))
 
 (defun run-command (command)
   (let ((results))
@@ -142,7 +147,19 @@ whitespace, return NIL."
                                  (member char '(#\Space #\Newline)))
                        do (write-char char))))))
 
+(defcmd help
+    "Display help for commands."
+    (let ((command (find-command (internalize-string
+                                  (read-stringy-argument nil))
+                                 nil)))
+      (if command
+          (format *command-output* "~A" (documentation command 'function))
+          (format *command-output* "Available commands:~{ ~A~}."
+                  (sort *registered-commands* 'string<))))
+    (values))
+
 (defcmd cd
+    "Set default pathname."
     (let ((pathname (pathname
                      (read-stringy-argument nil (user-homedir-pathname)))))
       (format *command-output* "Default pathname: ~A"
@@ -150,25 +167,30 @@ whitespace, return NIL."
 
 (defvar *last-compiled-file* nil)
 (defcmd cc
+    "Compile a file."
     (compile-file
      (setq *last-compiled-file*
            (pathname (read-stringy-argument nil *last-compiled-file*)))))
 
 (defvar *last-loaded-file* nil)
 (defcmd ld
+    "Load a file."
     (load
      (setq *last-loaded-file*
            (pathname (read-stringy-argument nil *last-loaded-file*)))))
 
-(defcmd re 
+(defcmd re
+    "Reload a module."
     (let ((module (internalize-string (read-stringy-argument))))
       (format *command-output*
               "~:[~;~&Module ~A loaded.~%~]"  (require module) module)))
 
 (defcmd rm
+    "Delete a file."
     (delete-file (pathname (read-stringy-argument))))
 
 (defcmd pa
+    "Change the current package."
     (let* ((name (internalize-string (read-stringy-argument nil "cl-user")))
            (package (find-package name)))
       (if package
@@ -181,6 +203,7 @@ whitespace, return NIL."
 (progn
   (defvar *last-loaded-web* nil)
   (defcmd lw
+      "Load a web."
       (handler-bind ((style-warning #'muffle-warning))
         (clweb:load-web
          (setq *last-loaded-web*
@@ -188,6 +211,7 @@ whitespace, return NIL."
 
   (defvar *last-tangled-file* nil)
   (defcmd tf
+      "Tangle a web."
       (handler-bind ((style-warning #'muffle-warning))
         (clweb:tangle-file
          (setq *last-tangled-file*
@@ -195,6 +219,7 @@ whitespace, return NIL."
 
   (defvar *last-woven-file* nil)
   (defcmd we
+      "Weave a web."
       (handler-bind ((style-warning #'muffle-warning))
         (clweb:weave
          (setq *last-woven-file*
