@@ -26,6 +26,74 @@ emit output to *COMMAND-OUTPUT*, and may read from *STANDARD-INPUT* to
 obtain user input."
   `(defun ,name () ,@args))
 
+(defun run-command (command)
+  (let ((results))
+    (with-input-from-string (*standard-input*
+                             (with-output-to-string (*command-output*)
+                               (setq results (multiple-value-list
+                                              (funcall command)))))
+      (loop for line = (read-line nil nil)
+            while line
+            do (format *command-output* "; ~A~%" line))
+      (values-list results))))
+
+(defun prompt (*standard-output*)
+  (format t "~&~A> "
+          (first (sort (cons (package-name *package*)
+                             (package-nicknames *package*))
+                       '< :key 'length))))
+
+(defvar *command-char* #\:
+  "Character that begins REPL command line.")
+
+(defvar *command-packages* (list #.(find-package *package*))
+  "List of packages in which to search for commands.")
+
+(define-condition command-not-found (error)
+  ((name :reader command-name :initarg :name)))
+
+(defun find-command (name &optional (not-found-error-p t) &aux
+                     (name (string name)))
+  (or (loop for package in *command-packages*
+            thereis (let ((symbol (find-symbol name (find-package package))))
+                      (when (fboundp symbol) symbol)))
+      (and not-found-error-p (error 'command-not-found :name name))))
+
+(defun read-form (*standard-input* *standard-output*)
+  (cond ((prog1 (char= (peek-char t) *command-char*)
+           ;; Wart/flaw/the-universe-sucks: if we don't force the output
+           ;; stream back to column 0, the pretty-printer will start at some
+           ;; dynamic column number based on the length of the prompt string.
+           (terpri))
+         (read-char)
+         (let ((name (let ((*package* (find-package "KEYWORD")))
+                       (symbol-name (read-preserving-whitespace)))))
+           (run-command (or (find-command name nil)
+                            (lambda ()
+                              (format *command-output*
+                                      "Command not found: ~A~%" name)
+                              (values))))))
+        (t (read-preserving-whitespace))))
+
+(defun use-repl ()
+  ;; FIXME: also define a repl-fun-generator function for threaded Lisps.
+  (macrolet ((save-and-set (var symbol)
+               `(progn
+                  (unless (get ,symbol ',var)
+                    (setf (get ,symbol ',var) ,var))
+                  (setf ,var ,symbol))))
+    (save-and-set sb-int:*repl-prompt-fun* 'prompt)
+    (save-and-set sb-int:*repl-read-form-fun* 'read-form))
+  (values))
+
+(defun unuse-repl ()
+  (macrolet ((restore (var symbol)
+               `(setf ,var (get ,symbol ',var)
+                      (get ,symbol ',var) nil)))
+    (restore sb-int:*repl-prompt-fun* 'prompt)
+    (restore sb-int:*repl-read-form-fun* 'read-form))
+  (values))
+
 (defun peek-to-newline ()
   "Like PEEK-CHAR, but if a #\Newline is seen in the initial
 whitespace, return NIL."
@@ -108,74 +176,6 @@ whitespace, return NIL."
                   (package-name (setf *package* package)))
           (error "No package named ~A exists." name))))
 
-(defun run-command (command)
-  (let ((results))
-    (with-input-from-string (*standard-input*
-                             (with-output-to-string (*command-output*)
-                               (setq results (multiple-value-list
-                                              (funcall command)))))
-      (loop for line = (read-line nil nil)
-            while line
-            do (format *command-output* "; ~A~%" line))
-      (values-list results))))
-
-(defun prompt (*standard-output*)
-  (format t "~&~A> "
-          (first (sort (cons (package-name *package*)
-                             (package-nicknames *package*))
-                       '< :key 'length))))
-
-(defvar *command-char* #\:
-  "Character that begins REPL command line.")
-
-(defvar *command-packages* (list #.(find-package *package*))
-  "List of packages in which to search for commands.")
-
-(define-condition command-not-found (error)
-  ((name :reader command-name :initarg :name)))
-
-(defun find-command (name &optional (not-found-error-p t) &aux
-                     (name (string name)))
-  (or (loop for package in *command-packages*
-            thereis (let ((symbol (find-symbol name (find-package package))))
-                      (when (fboundp symbol) symbol)))
-      (and not-found-error-p (error 'command-not-found :name name))))
-
-(defun read-form (*standard-input* *standard-output*)
-  (cond ((prog1 (char= (peek-char t) *command-char*)
-           ;; Wart/flaw/the-universe-sucks: if we don't force the output
-           ;; stream back to column 0, the pretty-printer will start at some
-           ;; dynamic column number based on the length of the prompt string.
-           (terpri))
-         (read-char)
-         (let ((name (let ((*package* (find-package "KEYWORD")))
-                       (symbol-name (read-preserving-whitespace)))))
-           (run-command (or (find-command name nil)
-                            (lambda ()
-                              (format *command-output*
-                                      "Command not found: ~A~%" name)
-                              (values))))))
-        (t (read-preserving-whitespace))))
-
-(defun use-repl ()
-  ;; FIXME: also define a repl-fun-generator function for threaded Lisps.
-  (macrolet ((save-and-set (var symbol)
-               `(progn
-                  (unless (get ,symbol ',var)
-                    (setf (get ,symbol ',var) ,var))
-                  (setf ,var ,symbol))))
-    (save-and-set sb-int:*repl-prompt-fun* 'prompt)
-    (save-and-set sb-int:*repl-read-form-fun* 'read-form))
-  (values))
-
-(defun unuse-repl ()
-  (macrolet ((restore (var symbol)
-               `(setf ,var (get ,symbol ',var)
-                      (get ,symbol ',var) nil)))
-    (restore sb-int:*repl-prompt-fun* 'prompt)
-    (restore sb-int:*repl-read-form-fun* 'read-form))
-  (values))
-
 ;;; CLWEB stuff.
 #+#.(cl:if (cl:member "CLWEB" cl:*modules* :test 'cl:equalp) '(cl:and) '(cl:or))
 (progn
