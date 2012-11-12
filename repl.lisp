@@ -145,14 +145,21 @@ whitespace, return NIL."
         thing)))
 
 (defun use-repl ()
-  ;; FIXME: also define a repl-fun-generator function for threaded
-  ;; Lisps.
-  (setf sb-int:*repl-prompt-fun* 'prompt
-        sb-int:*repl-read-form-fun* 'read-form))
+  ;; FIXME: also define a repl-fun-generator function for threaded Lisps.
+  (macrolet ((save-and-set (var symbol)
+               `(progn
+                  (unless (get ,symbol ',var)
+                    (setf (get ,symbol ',var) ,var))
+                  (setf ,var ,symbol))))
+    (save-and-set sb-int:*repl-prompt-fun* 'prompt)
+    (save-and-set sb-int:*repl-read-form-fun* 'read-form)))
 
 (defun unuse-repl ()
-  (setf sb-int:*repl-prompt-fun* 'sb-impl::repl-prompt-fun
-        sb-int:*repl-read-form-fun* 'sb-impl::repl-read-form-fun))
+  (macrolet ((restore (var symbol)
+               `(setf ,var (get ,symbol ',var)
+                      (get ,symbol ',var) nil)))
+    (restore sb-int:*repl-prompt-fun* 'prompt)
+    (restore sb-int:*repl-read-form-fun* 'read-form)))
 
 ;;; CLWEB stuff.
 (defvar *last-loaded-web* nil)
