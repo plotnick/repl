@@ -26,21 +26,13 @@
 
 This just defines a zero-argument function named NAME. Commands should
 emit output to *COMMAND-OUTPUT*, and may read from *STANDARD-INPUT* to
-obtain user input."
+obtain user input as arguments. They should return a form to be evaluated."
   `(progn
      (pushnew ',name *registered-commands*)
      (defun ,name () ,@args)))
 
 (defun run-command (command)
-  (let ((results))
-    (with-input-from-string (*standard-input*
-                             (with-output-to-string (*command-output*)
-                               (setq results (multiple-value-list
-                                              (funcall command)))))
-      (loop for line = (read-line nil nil)
-            while line
-            do (format *command-output* "; ~A~%" line))
-      (values-list results))))
+  (funcall command))
 
 (defun prompt (*standard-output*)
   (format t "~&~A> "
@@ -75,9 +67,10 @@ obtain user input."
                        (symbol-name (read-preserving-whitespace)))))
            (run-command (or (find-command name nil)
                             (lambda ()
-                              (format *command-output*
-                                      "Command not found: ~A~%" name)
-                              (values))))))
+                              `(progn
+                                 (format *command-output*
+                                         "Command not found: ~A~%" ,name)
+                                 (values)))))))
         (t (read-preserving-whitespace))))
 
 (defun use-repl ()
@@ -148,79 +141,80 @@ whitespace, return NIL."
                        do (write-char char))))))
 
 (defcmd help
-    "Display help for commands."
-    (let ((command (find-command (internalize-string
-                                  (read-stringy-argument nil))
-                                 nil)))
-      (if command
-          (format *command-output* "~A" (documentation command 'function))
-          (format *command-output* "Available commands:~{ ~A~}."
-                  (sort *registered-commands* 'string<))))
-    (values))
+  "Display help for commands."
+  `(let* ((name ,(read-stringy-argument nil))
+          (command (and name (find-command (internalize-string name) nil))))
+     (if command
+         (format *command-output* "~A" (documentation command 'function))
+         (format *command-output* "Available commands:~{ ~A~}."
+                 (sort *registered-commands* 'string<)))
+     (values)))
 
 (defcmd cd
-    "Set default pathname."
-    (let ((pathname (pathname
-                     (read-stringy-argument nil (user-homedir-pathname)))))
-      (format *command-output* "Default pathname: ~A"
-              (setf *default-pathname-defaults* pathname))))
+  "Set default pathname."
+  `(let ((pathname (pathname
+                    ,(read-stringy-argument nil (user-homedir-pathname)))))
+     (format *command-output* "Default pathname: ~A"
+             (setf *default-pathname-defaults* pathname))))
 
 (defvar *last-compiled-file* nil)
 (defcmd cc
-    "Compile a file."
-    (compile-file
-     (setq *last-compiled-file*
-           (pathname (read-stringy-argument nil *last-compiled-file*)))))
+  "Compile a file."
+  `(compile-file
+    (setq *last-compiled-file*
+          (pathname ,(read-stringy-argument nil *last-compiled-file*)))))
 
 (defvar *last-loaded-file* nil)
 (defcmd ld
-    "Load a file."
-    (load
-     (setq *last-loaded-file*
-           (pathname (read-stringy-argument nil *last-loaded-file*)))))
+  "Load a file."
+  `(load
+    (setq *last-loaded-file*
+          (pathname ,(read-stringy-argument nil *last-loaded-file*)))))
 
 (defcmd re
-    "Reload a module."
-    (let ((module (internalize-string (read-stringy-argument))))
-      (format *command-output*
-              "~:[~;~&Module ~A loaded.~%~]"  (require module) module)))
+  "Reload a module."
+  (let ((arg (read-stringy-argument)))
+    (if arg
+        `(let ((module (internalize-string ,arg)))
+           (format *command-output* "~:[~;~&Module ~A loaded.~%~]"
+                   (require module) module))
+        `(format *command-output* "Must supply a module name.~%"))))
 
 (defcmd rm
-    "Delete a file."
-    (delete-file (pathname (read-stringy-argument))))
+  "Delete a file."
+  `(delete-file (pathname ,(read-stringy-argument))))
 
 (defcmd pa
-    "Change the current package."
-    (let* ((name (internalize-string (read-stringy-argument nil "cl-user")))
-           (package (find-package name)))
-      (if package
-          (format *command-output* "Package: ~A"
-                  (package-name (setf *package* package)))
-          (error "No package named ~A exists." name))))
+  "Change the current package."
+  `(let* ((name (internalize-string ,(read-stringy-argument nil "cl-user")))
+          (package (find-package name)))
+     (if package
+         (setf *package* package)
+         (error "No package named ~A exists." name))))
 
 ;;; CLWEB stuff.
 #+#.(cl:if (cl:member "CLWEB" cl:*modules* :test 'cl:equalp) '(cl:and) '(cl:or))
 (progn
   (defvar *last-loaded-web* nil)
   (defcmd lw
-      "Load a web."
-      (handler-bind ((style-warning #'muffle-warning))
-        (clweb:load-web
-         (setq *last-loaded-web*
-               (pathname (read-stringy-argument nil *last-loaded-web*))))))
+    "Load a web."
+    `(handler-bind ((style-warning #'muffle-warning))
+       (clweb:load-web
+        (setq *last-loaded-web*
+              (pathname ,(read-stringy-argument nil *last-loaded-web*))))))
 
   (defvar *last-tangled-file* nil)
   (defcmd tf
-      "Tangle a web."
-      (handler-bind ((style-warning #'muffle-warning))
-        (clweb:tangle-file
-         (setq *last-tangled-file*
-               (pathname (read-stringy-argument nil *last-tangled-file*))))))
+    "Tangle a web."
+    `(handler-bind ((style-warning #'muffle-warning))
+       (clweb:tangle-file
+        (setq *last-tangled-file*
+              (pathname ,(read-stringy-argument nil *last-tangled-file*))))))
 
   (defvar *last-woven-file* nil)
   (defcmd we
-      "Weave a web."
-      (handler-bind ((style-warning #'muffle-warning))
-        (clweb:weave
-         (setq *last-woven-file*
-               (pathname (read-stringy-argument nil *last-woven-file*)))))))
+    "Weave a web."
+    `(handler-bind ((style-warning #'muffle-warning))
+       (clweb:weave
+        (setq *last-woven-file*
+              (pathname ,(read-stringy-argument nil *last-woven-file*)))))))
