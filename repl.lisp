@@ -21,18 +21,54 @@
 (defvar *registered-commands* nil
   "List of names of all known commands.")
 
-(defmacro defcmd (name &rest args)
+(deftype lambda-list-keyword () `(member ,@lambda-list-keywords))
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun parse-arg-readers (lambda-list)
+    "Parse a command lambda-list and return the function lambda list
+and associated argument reader forms.
+
+This function understands a highly restricted subset of the general
+lambda-list syntax. Required and optional arguments may both be given
+either by symbols or by lists of the form (NAME READER-FORM). If a reader
+form is given, it is collected and will be used to produce a form to be
+supplied as the NAME argument. If no reader form is given, NIL will be
+supplied."
+    (loop with state = :required
+          and args = '()
+          and reader-forms = '()
+          for x in lambda-list
+          do (case state
+               ((:required &optional)
+                (etypecase x
+                  (lambda-list-keyword (push x args)
+                                       (setq state x))
+                  (symbol (push x args)
+                          (push nil reader-forms))
+                  (list (push (car x) args)
+                        (push (cadr x) reader-forms))))
+               (otherwise (push x args)))
+          finally (return (values (nreverse args) (nreverse reader-forms))))))
+
+(defun make-thunk (form)
+  (if form
+      (coerce `(lambda () ,form) 'function)
+      (constantly nil)))
+
+(defun make-command-form (command)
+  `(,command ,@(mapcar #'funcall (get command 'arg-reader-functions))))
+
+(defmacro defcmd (name lambda-list &body body)
   "Define a command for the top-level repl.
 
-This just defines a zero-argument function named NAME. Commands should
-emit output to *COMMAND-OUTPUT*, and may read from *STANDARD-INPUT* to
-obtain user input as arguments. They should return a form to be evaluated."
-  `(progn
-     (pushnew ',name *registered-commands*)
-     (defun ,name () ,@args)))
-
-(defun run-command (command)
-  (funcall command))
+The lambda list may contain argument reader forms for the required and
+optional arguments; see PARSE-ARG-READERS for details."
+  (multiple-value-bind (args reader-forms) (parse-arg-readers lambda-list)
+    `(progn
+       (pushnew ',name *registered-commands*)
+       (setf (get ',name 'arg-reader-functions)
+             (mapcar #'make-thunk '(,@reader-forms)))
+       (defun ,name ,args ,@body))))
 
 (defun prompt (*standard-output*)
   (format t "~&~A> "
@@ -63,14 +99,14 @@ obtain user input as arguments. They should return a form to be evaluated."
            ;; dynamic column number based on the length of the prompt string.
            (terpri))
          (read-char)
-         (let ((name (let ((*package* (find-package "KEYWORD")))
-                       (symbol-name (read-preserving-whitespace)))))
-           (run-command (or (find-command name nil)
-                            (lambda ()
-                              `(progn
-                                 (format *command-output*
-                                         "Command not found: ~A~%" ,name)
-                                 (values)))))))
+         (let* ((name (let ((*package* (find-package "KEYWORD")))
+                        (symbol-name (read-preserving-whitespace))))
+                (command (find-command name nil)))
+           (if command
+               (make-command-form command)
+               (progn
+                 (format *command-output* "Command not found: ~A~%" name)
+                 '(values)))))
         (t (read-preserving-whitespace))))
 
 (defun use-repl ()
@@ -128,11 +164,13 @@ whitespace, return NIL."
     (:lower (invert-string string))
     (:upper (string string))))
 
+(define-condition required-argument-missing (error) ())
+
 (defun read-stringy-argument (&optional (newline-error-p t) newline-value)
   (case (peek-to-newline)
     (#\" (read))
     ((nil) (if newline-error-p
-               (format *command-output* "No argument before a newline.~%")
+               (error 'required-argument-missing)
                newline-value))
     (otherwise (with-output-to-string (*standard-output*)
                  (loop for char = (read-char nil nil)
@@ -140,81 +178,66 @@ whitespace, return NIL."
                                  (member char '(#\Space #\Newline)))
                        do (write-char char))))))
 
-(defcmd help
+(defcmd help (&optional (name (internalize-string (read-stringy-argument nil))))
   "Display help for commands."
-  `(let* ((name ,(read-stringy-argument nil))
-          (command (and name (find-command (internalize-string name) nil))))
-     (if command
-         (format *command-output* "~A" (documentation command 'function))
-         (format *command-output* "Available commands:~{ ~A~}."
-                 (sort *registered-commands* 'string<)))
-     (values)))
+  (let ((command (and name (find-command name nil))))
+    (if command
+        (format *command-output* "~A" (documentation command 'function))
+        (format *command-output* "Available commands:~{ ~A~}."
+                (sort *registered-commands* 'string<)))
+    (values)))
 
-(defcmd cd
+(defcmd cd (&optional (pathname
+                       (read-stringy-argument nil (user-homedir-pathname))))
   "Set default pathname."
-  `(let ((pathname (pathname
-                    ,(read-stringy-argument nil (user-homedir-pathname)))))
-     (format *command-output* "Default pathname: ~A"
-             (setf *default-pathname-defaults* pathname))))
+  (format *command-output* "Default pathname: ~A" pathname)
+  (setf *default-pathname-defaults* (pathname pathname)))
 
 (defvar *last-compiled-file* nil)
-(defcmd cc
+(defcmd cc ((pathname (read-stringy-argument nil *last-compiled-file*)))
   "Compile a file."
-  `(compile-file
-    (setq *last-compiled-file*
-          (pathname ,(read-stringy-argument nil *last-compiled-file*)))))
+  (compile-file (setq *last-compiled-file* (pathname pathname))))
 
 (defvar *last-loaded-file* nil)
-(defcmd ld
+(defcmd ld ((pathname (read-stringy-argument nil *last-loaded-file*)))
   "Load a file."
-  `(load
-    (setq *last-loaded-file*
-          (pathname ,(read-stringy-argument nil *last-loaded-file*)))))
+  (load (setq *last-loaded-file* (pathname pathname))))
 
-(defcmd re
+(defcmd re ((name (read-stringy-argument)))
   "Reload a module."
-  (let ((arg (read-stringy-argument)))
-    (if arg
-        `(let ((module (internalize-string ,arg)))
-           (format *command-output* "~:[~;~&Module ~A loaded.~%~]"
-                   (require module) module))
-        `(format *command-output* "Must supply a module name.~%"))))
+  (let ((module (internalize-string name)))
+    (format *command-output* "~:[~;~&Module ~A loaded.~%~]"
+            (require module) module)))
 
-(defcmd rm
+(defcmd rm ((pathname (read-stringy-argument)))
   "Delete a file."
-  `(delete-file (pathname ,(read-stringy-argument))))
+  (delete-file (pathname pathname)))
 
-(defcmd pa
+(defcmd pa ((name (read-stringy-argument nil)) &aux
+            (name (if name (internalize-string name) "COMMON-LISP-USER"))
+            (package (find-package name)))
   "Change the current package."
-  `(let* ((name (internalize-string ,(read-stringy-argument nil "cl-user")))
-          (package (find-package name)))
-     (if package
-         (setf *package* package)
-         (error "No package named ~A exists." name))))
+  (if package
+      (setf *package* package)
+      (error "No package named ~A exists." name)))
 
 ;;; CLWEB stuff.
 #+#.(cl:if (cl:member "CLWEB" cl:*modules* :test 'cl:equalp) '(cl:and) '(cl:or))
 (progn
   (defvar *last-loaded-web* nil)
-  (defcmd lw
+  (defcmd lw (&optional (pathname (read-stringy-argument nil *last-loaded-web*)))
     "Load a web."
-    `(handler-bind ((style-warning #'muffle-warning))
-       (clweb:load-web
-        (setq *last-loaded-web*
-              (pathname ,(read-stringy-argument nil *last-loaded-web*))))))
+    (handler-bind ((style-warning #'muffle-warning))
+      (clweb:load-web (setq *last-loaded-web* (pathname pathname)))))
 
   (defvar *last-tangled-file* nil)
-  (defcmd tf
+  (defcmd tf (&optional (pathname (read-stringy-argument nil *last-tangled-file*)))
     "Tangle a web."
-    `(handler-bind ((style-warning #'muffle-warning))
-       (clweb:tangle-file
-        (setq *last-tangled-file*
-              (pathname ,(read-stringy-argument nil *last-tangled-file*))))))
+    (handler-bind ((style-warning #'muffle-warning))
+      (clweb:tangle-file (setq *last-tangled-file* (pathname pathname)))))
 
   (defvar *last-woven-file* nil)
-  (defcmd we
+  (defcmd we (&optional (pathname (read-stringy-argument nil *last-woven-file*)))
     "Weave a web."
-    `(handler-bind ((style-warning #'muffle-warning))
-       (clweb:weave
-        (setq *last-woven-file*
-              (pathname ,(read-stringy-argument nil *last-woven-file*)))))))
+    (handler-bind ((style-warning #'muffle-warning))
+      (clweb:weave (setq *last-woven-file* (pathname pathname))))))
