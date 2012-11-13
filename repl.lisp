@@ -79,7 +79,7 @@ optional arguments; see PARSE-ARG-READERS for details."
 (defvar *command-char* #\:
   "Character that begins REPL command line.")
 
-(defvar *command-packages* (list #.(find-package *package*))
+(defvar *command-packages* (list *package*)
   "List of packages in which to search for commands.")
 
 (define-condition command-not-found (error)
