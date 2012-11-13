@@ -192,11 +192,12 @@ whitespace, return NIL."
                 (sort *registered-commands* 'string<)))
     (values)))
 
-(defcmd cd (&optional (pathname
-                       (read-stringy-argument nil (user-homedir-pathname))))
+(defcmd cd (&optional (pathname (read-stringy-argument nil)))
   "Set default pathname."
-  (format *command-output* "Default pathname: ~A" pathname)
-  (setf *default-pathname-defaults* (pathname pathname)))
+  (setf *default-pathname-defaults*
+        (if pathname
+            (make-pathname :directory (pathname-directory (truename pathname)))
+            (user-homedir-pathname))))
 
 (defvar *last-compiled-file* nil)
 (defcmd cc ((pathname (read-stringy-argument nil *last-compiled-file*)))
