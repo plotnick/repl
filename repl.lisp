@@ -92,6 +92,10 @@ optional arguments; see PARSE-ARG-READERS for details."
                       (when (fboundp symbol) symbol)))
       (and not-found-error-p (error 'command-not-found :name name))))
 
+(defun slurp ()
+  "Discard all pending input on standard input."
+  (loop while (read-char-no-hang)))
+
 (defun read-form (*standard-input* *standard-output*)
   (cond ((prog1 (char= (peek-char t) *command-char*)
            ;; Wart/flaw/the-universe-sucks: if we don't force the output
@@ -106,6 +110,7 @@ optional arguments; see PARSE-ARG-READERS for details."
                (make-command-form command)
                (progn
                  (format *command-output* "Command not found: ~A~%" name)
+                 (slurp)
                  '(values)))))
         (t (read-preserving-whitespace))))
 
