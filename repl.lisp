@@ -199,16 +199,6 @@ whitespace, return NIL."
             (make-pathname :directory (pathname-directory (truename pathname)))
             (user-homedir-pathname))))
 
-(defvar *last-compiled-file* nil)
-(defcmd cc ((pathname (read-stringy-argument nil *last-compiled-file*)))
-  "Compile a file."
-  (compile-file (setq *last-compiled-file* (pathname pathname))))
-
-(defvar *last-loaded-file* nil)
-(defcmd ld ((pathname (read-stringy-argument nil *last-loaded-file*)))
-  "Load a file."
-  (load (setq *last-loaded-file* (pathname pathname))))
-
 (defcmd re ((name (read-stringy-argument)))
   "Reload a module."
   (let ((module (internalize-string name)))
@@ -227,23 +217,54 @@ whitespace, return NIL."
       (setf *package* package)
       (error "No package named ~A exists." name)))
 
+(defun read-pathname-argument (command &optional prompt)
+  "Try to read a pathname argument for COMMAND, optionally prompting with
+PROMPT if none is available or cached in COMMAND's plist."
+  (or (read-stringy-argument nil)
+      (get command 'last-file)
+      (when prompt
+        (loop with *standard-input* = *query-io*
+              and *standard-output* = *query-io*
+              do (princ prompt)
+                 (force-output)
+              thereis (read-stringy-argument nil)))))
+
+(defmacro define-simple-file-command (name (&key documentation
+                                            (prompt "File name: ")
+                                            function))
+  "Define a command that operates on a single file, defaulting to the last
+file given to that command. If the command has not been run before, prompt
+for a file name."
+  (check-type function symbol)
+  (check-type prompt string)
+  `(defcmd ,name ((pathname (read-pathname-argument ',name ,prompt)))
+     ,@(if documentation (list documentation) nil)
+     (,function (setf (get ',name 'last-file) (pathname pathname)))))
+
+(define-simple-file-command cc
+  (:documentation "Compile a file."
+   :prompt "Compile file: "
+   :function compile-file))
+
+(define-simple-file-command ld
+  (:documentation "Load a file."
+   :prompt "Load file: "
+   :function load))
+
 ;;; CLWEB stuff.
 #+#.(cl:if (cl:member "CLWEB" cl:*modules* :test 'cl:equalp) '(cl:and) '(cl:or))
 (progn
-  (defvar *last-loaded-web* nil)
-  (defcmd lw (&optional (pathname (read-stringy-argument nil *last-loaded-web*)))
-    "Load a web."
-    (handler-bind ((style-warning #'muffle-warning))
-      (clweb:load-web (setq *last-loaded-web* (pathname pathname)))))
+  (define-simple-file-command lw
+    (:documentation "Load a web."
+     :prompt "Load web: "
+     :function clweb:load-web))
 
-  (defvar *last-tangled-file* nil)
-  (defcmd tf (&optional (pathname (read-stringy-argument nil *last-tangled-file*)))
-    "Tangle a web."
-    (handler-bind ((style-warning #'muffle-warning))
-      (clweb:tangle-file (setq *last-tangled-file* (pathname pathname)))))
+  (define-simple-file-command tf
+    (:documentation "Tangle a web."
+     :prompt "Tangle web: "
+     :function clweb:tangle-file))
 
-  (defvar *last-woven-file* nil)
-  (defcmd we (&optional (pathname (read-stringy-argument nil *last-woven-file*)))
-    "Weave a web."
-    (handler-bind ((style-warning #'muffle-warning))
-      (clweb:weave (setq *last-woven-file* (pathname pathname))))))
+  (define-simple-file-command we
+    (:documentation "Weave a web."
+     :prompt "Weave web: "
+     :function clweb:weave)))
