@@ -494,6 +494,15 @@ of the available alternatives.
       (setf *package* package)
       (error "No package named ~A exists." name)))
 
+@ This next command is pure syntactic sugar, but it's handy sugar.
+It pretty-prints the macro expansion of an implicitly quoted form.
+
+@l
+(defcmd ma ((form `(quote ,(read))))
+  "Pretty-print the macro expansion of FORM."
+  (write (macroexpand form) :stream *command-output* :escape t :pretty t)
+  (values))
+
 @ Next we'll define a suite of commands that operate on files:
 load a file, compile a file, \etc. Since it's common to operate on
 the same file many times in a row, we'll define an argument reader
