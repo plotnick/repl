@@ -1,0 +1,11 @@
+repl.lisp
+repl-tests.lisp
+*.fasl
+*.tex
+*.idx
+*.scn
+*.aux
+*.log
+*.toc
+*.dvi
+*.pdf
