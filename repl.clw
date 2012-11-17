@@ -137,16 +137,19 @@ package for a test, so we'll define a little macro to make that easy.
   t)
 
 @ To find a command by its name, we'll look for an fbound symbol with the
-same name in each of the packages listed in |*command-packages*|. The list
+same name in each of the packages listed in |*command-packages*|. (The list
 is searched in order so that user-supplied commands may override default
-commands if they register their packages using |register-command-package|.
+commands if they register their packages using |register-command-package|.)
+To avoid mis-identifying random functions as commands, we'll also require
+that the command function be registered in the global commands list.
 
 @l
 (defun find-command (name &optional (not-found-error-p t) &aux ;
                      (name (string name)))
   (loop for package in *command-packages*
         thereis (let ((symbol (find-symbol name (find-package package))))
-                  (when (fboundp symbol) symbol))
+                  (and (fboundp symbol)
+                       (find symbol *commands*)))
         finally (and not-found-error-p (error 'command-not-found :name name))))
 
 (defun register-command-package (package)
@@ -160,33 +163,36 @@ commands if they register their packages using |register-command-package|.
 functions later on, it will be convenient to be able to generate temporary
 commands. So here's a little macro that evaluates its body in a lexical
 environment in which each of a list of symbols is bound to a fresh command
-function whose name is interned in a temporary package. It uses a little
-helper macro to ensure that the commands can be found via the specified
-search procedure.
+whose name is interned in a temporary package.
 
 @l
-(defmacro with-temporary-command-package (&body body)
-  `(with-temporary-package ()
-     (let ((*command-packages* (cons *package* *command-packages*)))
-       ,@body)))
-
 (defmacro with-temporary-commands ((&rest commands) &body body)
-  `(with-temporary-command-package ()
-     (let ,@(mapcar (lambda (name)
-                      `((,name (intern ,(string name)))))
-                    commands)
+  `(with-temporary-package ()
+     (let ((*command-packages* (cons *package* *command-packages*))
+           (*commands* *commands*)
+           ,@(mapcar (lambda (name)
+                       `(,name (intern ,(string name))))
+                     commands))
        ,@(loop for name in commands
+               collect `(push ,name *commands*)
                collect `(setf (symbol-function ,name) #'identity))
        ,@body)))
 
 @t@l
 (deftest find-command
   (with-temporary-commands (foo)
-    (let ((bar (intern "BAR")))
-      (values (eq (find-command "FOO") foo)
-              (find-command "BAR" nil) ; not fbound
-              (find-command "BAZ" nil))))
+    (values (eq (find-command "FOO") foo)
+            ;; Not fbound.
+            (find-command (intern "BAR") nil)
+            ;; Fbound, but not registered as a command.
+            (find-command (let ((baz (intern "BAZ")))
+                            (setf (symbol-function baz) #'identity)
+                            baz)
+                          nil)
+            ;; Not even interned.
+            (find-command "QUUX" nil)))
   t
+  nil
   nil
   nil)
 
@@ -330,10 +336,9 @@ Note that |invert-string| is its own inverse.
     (:lower (invert-string string))
     (:upper (string string))))
 
-@ We're almost ready to turn to the command defining form, but first we
-need one more piece of bookkeeping: a list of all of the commands so
-defined. Right now, only the `help' command uses this, but it might be
-useful later for, e.g.,~prefix matching.
+@ We're almost ready to turn to the command defining form, but first
+we need one more piece of bookkeeping: a list of all of the commands
+so defined.
 
 @<Global variables@>=
 (defvar *commands* nil
