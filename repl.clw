@@ -2,6 +2,7 @@
 \font\sc=cmcsc10
 \def\<#1>{\leavevmode\hbox{$\mkern-2mu\langle${\it #1\/}$\rangle$}}
 \def\etc.{{\it \char`&c.\spacefactor1000}}
+\def\eof{{\sc eof}}
 \def\repl{{\sc repl}}
 
 @*REPL. This module provides a command-line interface designed to sit atop
@@ -23,13 +24,14 @@ of its own.
 (provide "REPL")
 @e
 (defpackage "REPL"
-  (:use "COMMON-LISP")
+  (:use "COMMON-LISP" #+sbcl "SB-EXT")
   (:export "USE-REPL"
            "UNUSE-REPL"
            "DEFCMD"
            "*COMMAND-OUTPUT*"
            "*COMMAND-CHAR*"
-           "*COMMAND-PACKAGES*"))
+           "*COMMAND-PACKAGES*"
+           "*IGNORE-EOF*"))
 @e
 (in-package "REPL")
 
@@ -225,17 +227,19 @@ it just calls~|read|.
   (loop while (read-char-no-hang)))
 
 (defun read-form (*standard-input* *standard-output*)
-  (cond (@<Is the first available character...@>
-         (read-char) ; discard command character
-         (let* ((name (read-command-name))
-                (command (find-command name nil)))
-           (if command
-               `(,command ,@(collect-command-arguments command))
-               (progn
-                 (format *command-output* "Command not found: ~A~%" name)
-                 (slurp)
-                 '(values)))))
-        (t (read))))
+  (handler-case
+      (cond (@<Is the first available character...@>
+             (read-char)                ; discard command character
+             (let* ((name (read-command-name))
+                    (command (find-command name nil)))
+               (if command
+                   `(,command ,@(collect-command-arguments command))
+                   (progn
+                     (format *command-output* "Command not found: ~A~%" name)
+                     (slurp)
+                     '(values)))))
+            (t (read)))
+    (end-of-file () @<Handle \eof\ on standard input@>)))
 
 @ Wart/flaw/the-universe-sucks: if we don't immediately force the output
 stream back to column~0, the pretty-printer will start at some dynamic
@@ -244,6 +248,19 @@ column number based on the length of the prompt string.
 @<Is the first available character a command character?@>=
 (prog1 (char= (peek-char t) *command-char*)
   (terpri))
+
+@ Like SBCL's default form reader, we respect the venerable Unix convention
+of interpreting \eof\ as a request to exit the process. Unlike SBCL, however,
+we also provide an option to disable this behavior.
+
+@<Handle \eof...@>=
+(if *ignore-eof* '(values) (exit))
+
+@ This variable behaves like the `ignoreeof' option in the Bourne shell.
+
+@<Global variables@>=
+(defvar *ignore-eof* nil
+  "If true, ignore EOF on standard input.")
 
 @ Now that we've shown how commands are read, let's define some functions
 that commands can use to collect their arguments.
