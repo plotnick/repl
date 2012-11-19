@@ -30,7 +30,7 @@ of its own.
            "DEFCMD"
            "*COMMAND-OUTPUT*"
            "*COMMAND-CHAR*"
-           "*COMMAND-PACKAGES*"
+           "*COMMAND-PACKAGE*"
            "*IGNORE-EOF*"))
 @e
 (in-package "REPL")
@@ -74,35 +74,107 @@ it is that function call which gets evaluated.
 A command's functionality is implemented primarily by a function with
 the same name (under |string=|) as the command; we'll call such functions
 {\it command functions\/}, or just `commands' where no confusion can arise.
-A command's name is defined to be the |symbol-name| of the underlying command
-function, which means that commands are named by strings, and that there is
-a single namespace for all commands.
+A command's name is defined to be the |symbol-name| of the underlying
+command function; there is thus a single namespace for all commands.
 
-[In theory, it might be useful to support package-prefixed commands.
-The problem is that after you've read a symbol using |read|, you can't
-tell whether the string representation used to name that symbol included
-a package prefix or not. If Common Lisp provided a |read-token| function,
-this wouldn't be an issue; but it doesn't, and it's surprisingly tricky
-to write one (and probably impossible to do so portably).]
+@ All of the command functions live in a dedicated package (the
+{\it command package\/}), which is stored in the global |*command-package*|
+variable. The name of the command package is unimportant and should not
+be depended on. Note that this package does {\it not\/} use or import any
+symbols from {\tt COMMON-LISP} package; this is important so that we may
+define commands whose names are the same as symbols in that package.
 
-To avoid cluttering the current package with interned command names, we'll
-read all command names with the {\tt KEYWORD} package as the current package.
-We use |read-preserving-whitespace| so that we can treat newlines specially
-when collecting arguments (see below).
+@<Global variables@>=
+(defvar *command-package* (make-package "REPL-COMMANDS")
+  "Package which contains command functions.")
+
+@ To avoid cluttering the current package with interned command names,
+we'll read all command names with the command package as the current
+package. We use |read-preserving-whitespace| so that we can treat newlines
+specially when collecting arguments (see below).
 
 @l
-(defun read-command-name (&optional stream)
-  (let ((*package* (find-package "KEYWORD")))
-    (symbol-name (read-preserving-whitespace stream))))
+(defun read-command-name (&rest args)
+  (let ((*package* (find-package *command-package*)))
+    (let ((symbol (apply #'read-preserving-whitespace args)))
+      (and symbol (symbol-name symbol)))))
 
-@ Commands are distinguished from ordinary Lisp forms by looking at the
-first character available on standard input. If it is the same under
-|char=| as the value of |*command-char*|---which we call, unsurprisingly,
-the {\it command character}---then the symbol named by the immediately
-following characters (i.e., what |read| returns starting just {\it after\/}
-the command character) is taken as a command name. The command character
-is {\it not\/} part of the command name; it just tells the reader that a
-command name follows.
+@t Ensure that command names are read correctly and that no symbols are
+interned in the current package.
+
+To test this, we'll use a temporary package as the current package, and
+another temporary package as the command package (so that we don't clutter
+up the real one). This is halfway to defining temporary commands, an ability
+that we'll need later on (when we test |find-command|), so we might as well
+just do that now.
+
+|with-temporary-package| executes its body with |*package*| bound
+to a temporary package, which is deleted when the body exits.
+|with-temporary-commands| executes its body with a fresh command
+package containing command functions for each of the given command
+names.
+
+@l
+(defmacro with-temporary-package ;
+    ((&optional (name (format nil "TEMP-PACKAGE-~D" *gensym-counter*)))
+     &body body)
+  (let ((temp-package (gensym)))
+    `(let* ((,temp-package (make-package ,name))
+            (*package* ,temp-package))
+       (unwind-protect (progn ,@body)
+         (delete-package ,temp-package)))))
+
+(defmacro with-temporary-commands ((&rest commands) &body body)
+  `(with-temporary-package ()
+     (let ((*command-package* *package*)
+           ,@(loop for name in commands
+                   collect `(,name (intern ,(string name)))))
+       ,@(loop for name in commands
+               collect `(export ,name *command-package*)
+               collect `(setf (symbol-function ,name) #'identity))
+       ,@body)))
+
+(deftest read-command-name
+  (with-temporary-commands ()
+    (with-temporary-package ()
+      (with-input-from-string (stream "FOO")
+        (values (read-command-name stream)
+                (null (loop for symbol being each present-symbol
+                            collect symbol))))))
+  "FOO"
+  t)
+
+@ In addition to living in the command package, command functions will
+always be exported and fbound. This makes finding them straightforward,
+since we'll assume that nothing {\it but\/} commands have all of those
+properties.
+
+@l
+(defmacro do-commands ((var &optional result-form) &body body)
+  `(do-external-symbols (,var *command-package* ,result-form)
+     (when (fboundp ,var)
+       ,@body)))
+
+(defun available-commands (&aux commands)
+  (do-commands (command commands)
+    (push command commands)))
+
+@t This test also serves to exercise the |do-commands| macro.
+
+@l
+(deftest available-commands
+  (with-temporary-commands (foo bar baz quux)
+    (null (set-exclusive-or (list foo bar baz quux) (available-commands))))
+  t)
+
+@ At the \repl\ prompt, commands are distinguished from ordinary Lisp forms
+by looking at the first character available on standard input. If it is the
+same under |char=| as the value of |*command-char*|---which we call,
+unsurprisingly, the {\it command character}---then the symbol named by the
+immediately following characters (i.e., what |read| returns starting just
+{\it after\/} the command character) is taken as a command name. The
+command character is {\it not\/} part of the command name; it just tells
+the reader that a command name follows.
 
 The command character defaults to~`:', but many other characters would be
 suitable; e.g., `/', `${\char`\\}$', `!'. Really, any character except~`('
@@ -112,97 +184,169 @@ that isn't commonly used at the beginning of a symbol name is probably fine.
 (defvar *command-char* #\:
   "Character that introduces a REPL command.")
 
-@t Ensure that command names are read correctly and that no symbols are
-interned in the current package.
+@ The primary lookup routine for commands is |find-command|, which takes a
+name and attempts to find and return the command function with that name.
+But we'll need a few helper functions before we define it, since we want to
+make command entry and recovery from errors as easy as possible for the user.
 
-This is the first, but not the last, time that we'll need a temporary
-package for a test, so we'll define a little macro to make that easy.
-@l
-(defmacro with-temporary-package
-    ((&optional (name (format nil "TEMP-PACKAGE-~D" *gensym-counter*)))
-     &body body)
-  (let ((temp-package (gensym)))
-    `(let* ((,temp-package (make-package ,name))
-            (*package* ,temp-package))
-       (unwind-protect (progn ,@body)
-         (delete-package ,temp-package)))))
-
-(deftest read-command-name
-  (with-temporary-package ()
-    (with-input-from-string (stream "FOO")
-      (values (read-command-name stream)
-              (null (loop for symbol being each present-symbol
-                          collect symbol)))))
-  "FOO"
-  t)
-
-@ To find a command by its name, we'll look for an fbound symbol with the
-same name in each of the packages listed in |*command-packages*|. (The list
-is searched in order so that user-supplied commands may override default
-commands if they register their packages using |register-command-package|.)
-To avoid mis-identifying random functions as commands, we'll also require
-that the command function be registered in the global commands list.
+For instance, we'll accept any unambiguous prefix of a defined command's
+name as a designator for that command. Since the list of defined commands
+is expected to be small (a few dozen, maybe), a simple linear search is
+fine here.
 
 @l
-(defun find-command (name &optional (not-found-error-p t) &aux ;
-                     (name (string name)))
-  (loop for package in *command-packages*
-        thereis (let ((symbol (find-symbol name (find-package package))))
-                  (and (fboundp symbol)
-                       (find symbol *commands*)))
-        finally (and not-found-error-p (error 'command-not-found :name name))))
+(defun string-prefix-or-equal-p (string1 string2)
+  (let ((length1 (length (string string1)))
+        (length2 (length (string string2))))
+    (and (>= length2 length1)
+         (let ((end (min length1 length2)))
+           (string-equal string1 string2 :end1 end :end2 end)))))
 
-(defun register-command-package (package)
-  (push package *command-packages*))
-
-@ @<Global variables@>=
-(defvar *command-packages* (list *package*)
-  "List of packages in which to search for commands.")
-
-@t To test |find-command| as well as some of the argument reader helper
-functions later on, it will be convenient to be able to generate temporary
-commands. So here's a little macro that evaluates its body in a lexical
-environment in which each of a list of symbols is bound to a fresh command
-whose name is interned in a temporary package.
-
-@l
-(defmacro with-temporary-commands ((&rest commands) &body body)
-  `(with-temporary-package ()
-     (let ((*command-packages* (cons *package* *command-packages*))
-           (*commands* *commands*)
-           ,@(mapcar (lambda (name)
-                       `(,name (intern ,(string name))))
-                     commands))
-       ,@(loop for name in commands
-               collect `(push ,name *commands*)
-               collect `(setf (symbol-function ,name) #'identity))
-       ,@body)))
+(defun match-commands (name &aux matches)
+  (do-commands (command matches)
+    (when (string-prefix-or-equal-p name command)
+      (push command matches))))
 
 @t@l
-(deftest find-command
-  (with-temporary-commands (foo)
-    (values (eq (find-command "FOO") foo)
-            ;; Not fbound.
-            (find-command (intern "BAR") nil)
-            ;; Fbound, but not registered as a command.
-            (find-command (let ((baz (intern "BAZ")))
-                            (setf (symbol-function baz) #'identity)
-                            baz)
-                          nil)
-            ;; Not even interned.
-            (find-command "QUUX" nil)))
+(deftest string-prefix-or-equal-p
+  (values (string-prefix-or-equal-p "" "foo")
+          (string-prefix-or-equal-p "f" "foo")
+          (string-prefix-or-equal-p "foo" "foo")
+          (string-prefix-or-equal-p "foo-bar" "foo"))
   t
-  nil
-  nil
+  t
+  t
   nil)
 
-@ None of the code in this module currently signals an error when a command
-is not found, but it should be possible to provide some convenient restarts
-in |find-command|.
+(deftest match-commands
+  (with-temporary-commands (foo foo-bar foo-baz bar baz quux)
+    (null (set-exclusive-or (list foo foo-bar foo-baz)
+                            (match-commands "FOO"))))
+  t)
 
-@<Condition classes@>=
+@ If a command can not be found---either because it does not name a valid
+command or because it is an ambiguous prefix---we can prompt the user to
+choose a different name. Note that this function calls |find-command| on
+the value entered, making the two routines mutually recursive. It is used
+to provide arguments to |invoke-restart-interactively|, which is why it
+returns a list.
+
+@l
+(defun prompt-for-command ()
+  (format *query-io* "Enter a command name: ")
+  (force-output *query-io*)
+  (list (find-command (read-command-name *query-io*))))
+
+@ If the user chooses to abort instead of entering a new command name,
+it's nice to give them the opportunity to throw away whatever's left on
+standard input, on the assumption that it's only worth evaluating as part
+of the aborted command. (SBCL's debugger has a command called {\tt SLURP}
+from which this idea was taken, but that command does not also invoke the
+|abort| restart).
+
+@l
+(defun slurp ()
+  (loop while (read-char-no-hang)))
+
+@ Here, then, is the definition of |find-command|. If there is exactly one
+command matching the given name, it is returned; otherwise, a correctable
+error is signaled.
+
+@l
+(defun find-command (name)
+  (restart-case
+      (let ((command-names (match-commands name)))
+        (case (length command-names)
+          (0 (error 'command-not-found :name name))
+          (1 (return-from find-command (first command-names)))
+          (t (error 'ambiguous-command-name ;
+                    :name name ;
+                    :matches command-names))))
+    (use-value (value)
+      :report "Specify a command name to use."
+      :interactive prompt-for-command
+      (return-from find-command value))
+    (slurp ()
+      :report "Abort command and discard remaining input."
+      :interactive slurp
+      (abort))))
+
+@ @<Condition classes@>=
 (define-condition command-not-found (error)
-  ((name :reader command-name :initarg :name)))
+  ((name :reader command-name :initarg :name))
+  (:report (lambda (condition stream)
+             (format stream "Command not found: ~A." ;
+                     (command-name condition)))))
+
+(define-condition ambiguous-command-name (command-not-found)
+  ((matches :reader command-matches :initarg :matches))
+  (:report (lambda (condition stream)
+             (format stream "Ambiguous command ~A:~{ ~A~}."
+                     (command-name condition) (command-matches condition)))))
+
+@t There are three main cases to test for |find-command|: successful lookup,
+unsuccessful lookup (with several causes), and lookup based on an ambiguous
+prefix.
+
+@l
+(deftest (find-command found)
+  (with-temporary-commands (foo)
+    (eq (find-command "FOO") foo))
+  t)
+
+(deftest (find-command not-found)
+  (with-temporary-commands (foo)
+    (flet ((command-not-found-p (command)
+             (handler-case (not (find-command command))
+               (command-not-found () t))))
+      (values
+       ;; Not fbound.
+       (command-not-found-p (intern "BAR"))
+
+       ;; Fbound, but not registered as a command.
+       (command-not-found-p (let ((baz (intern "BAZ")))
+                              (setf (symbol-function baz) #'identity)
+                              baz))
+
+       ;; Not even interned.
+       (command-not-found-p "QUUX"))))
+  t
+  t
+  t)
+
+(deftest (find-command ambig)
+  (with-temporary-commands (bar baz)
+    (let ((prefix "B")
+          (resolved))
+      (values (eq (handler-bind ((ambiguous-command-name
+                                  (lambda (condition)
+                                    (setq resolved ;
+                                          (eq (command-name condition) prefix))
+                                    (use-value bar))))
+                    (find-command prefix))
+                  bar)
+              resolved)))
+  t
+  t)
+
+@ Although not usually necessary, it's sometimes handy to invoke command
+functions directly. We might as well make that easy by utilizing the
+machinery of |find-command|.
+
+@l
+(defun run-command (name &rest args)
+  (apply (find-command name) args))
+
+@t This test relies on the fact that the commands defined by
+|with-temporary-commands| are all fbound to the identity function.
+Also note the abbreviation of the command name.
+
+@l
+(deftest run-command
+  (with-temporary-commands (foo-bar)
+    (let ((x (cons nil nil)))
+      (eq (run-command 'foo x) x)))
+  t)
 
 @ After a command name is read and its command function found, we'll
 immediately look for arguments to pass it. We could just use |read|,
@@ -228,22 +372,12 @@ in the |car| and the list of collected arguments in the~|cdr|. Otherwise,
 it just calls~|read|.
 
 @l
-(defun slurp ()
-  "Discard all pending input on standard input."
-  (loop while (read-char-no-hang)))
-
 (defun read-form (*standard-input* *standard-output*)
   (handler-case
       (cond (@<Is the first available character...@>
-             (read-char)                ; discard command character
-             (let* ((name (read-command-name))
-                    (command (find-command name nil)))
-               (if command
-                   `(,command ,@(collect-command-arguments command))
-                   (progn
-                     (format *command-output* "Command not found: ~A~%" name)
-                     (slurp)
-                     '(values)))))
+             (read-char) ; discard command character
+             (let ((command (find-command (read-command-name))))
+               (cons command (collect-command-arguments command))))
             (t (read)))
     (end-of-file () @<Handle \eof\ on standard input@>)))
 
@@ -336,14 +470,6 @@ Note that |invert-string| is its own inverse.
     (:lower (invert-string string))
     (:upper (string string))))
 
-@ We're almost ready to turn to the command defining form, but first
-we need one more piece of bookkeeping: a list of all of the commands
-so defined.
-
-@<Global variables@>=
-(defvar *commands* nil
-  "A list of the names of all known commands.")
-
 @ |defcmd| is the primary command defining form. Its surface syntax
 is identical to that of |defun|, and in fact it consists of little more
 than a wrapper around that macro. But the lambda list provided to |defcmd|
@@ -359,19 +485,24 @@ in the list of forms, and we'll default to using |read-preserving-whitespace|
 as the argument reader for that parameter.
 
 Note that the argument reader thunks are constructed in the null lexical
-environment.
+environment. Note also that because the command name is interned in the
+command package, the block established by |defun| is probably not named
+what you think it is, which means that in the body of a command defined
+using |(defcmd name)|, |(return-from name value)| probably won't do what
+you want.
 
 @l
 @<Define command lambda list parsing routine@>
 
 (defmacro defcmd (name lambda-list &body body)
   "Define a command for the top-level REPL."
-  (multiple-value-bind (params reader-forms) (parse-arg-readers lambda-list)
-    `(progn
-       (pushnew ',name *commands*)
-       (setf (get ',name 'arg-reader-functions)
-             (mapcar #'make-arg-reader '(,@reader-forms)))
-       (defun ,name ,params ,@body))))
+  (let ((name (intern (symbol-name name) *command-package*)))
+    (multiple-value-bind (params reader-forms) (parse-arg-readers lambda-list)
+      `(progn
+         (export ',name *command-package*)
+         (setf (get ',name 'arg-reader-functions) ;
+               (mapcar #'make-arg-reader '(,@reader-forms)))
+         (defun ,name ,params ,@body)))))
 
 (defun make-arg-reader (form)
   (if form
@@ -470,11 +601,15 @@ commands.
 @l
 (defcmd help (&optional (name (internalize-string (read-stringy-argument nil))))
   "Display help for commands."
-  (let ((command (and name (find-command name nil))))
+  (let ((command (and name
+                      (handler-case (find-command name)
+                        (command-not-found (condition)
+                          (format *command-output* "~A~%" condition))))))
     (if command
-        (format *command-output* "~A" (documentation command 'function))
+        (format *command-output* "~A: ~A" ;
+                command (documentation command 'function))
         (format *command-output* "Available commands:~{ ~A~}."
-                (sort *commands* 'string<)))
+                (sort (available-commands) #'string<)))
     (values)))
 
 @ We generally don't care about the working directory of the Lisp process,
@@ -494,7 +629,7 @@ trailing slash is elided.
 of the available alternatives.
 
 @l
-(defcmd re ((name (read-stringy-argument)))
+(defcmd reload ((name (read-stringy-argument)))
   "Reload a module."
   (let ((module (internalize-string name)))
     (format *command-output* "~:[~;~&Module ~A loaded.~%~]"
@@ -508,9 +643,11 @@ of the available alternatives.
 @ Fast package switching is also useful.
 
 @l
-(defcmd pa ((name (read-stringy-argument nil)) &aux
-            (name (if name (internalize-string name) "COMMON-LISP-USER"))
-            (package (find-package name)))
+(defcmd package ((name (read-stringy-argument nil)) &aux
+                 (name (if name
+                           (internalize-string name)
+                           "COMMON-LISP-USER"))
+                 (package (find-package name)))
   "Change the current package."
   (if package
       (setf *package* package)
@@ -520,7 +657,7 @@ of the available alternatives.
 It pretty-prints the macro expansion of an implicitly quoted form.
 
 @l
-(defcmd ma ((form `(quote ,(read))))
+(defcmd macroexpand ((form `(quote ,(read))))
   "Pretty-print the macro expansion of FORM."
   (write (macroexpand form) :stream *command-output* :escape t :pretty t)
   (values))
