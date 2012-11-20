@@ -85,8 +85,9 @@ symbols from {\tt COMMON-LISP} package; this is important so that we may
 define commands whose names are the same as symbols in that package.
 
 @<Global variables@>=
-(defvar *command-package* (make-package "REPL-COMMANDS")
-  "Package which contains command functions.")
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defvar *command-package* (make-package "REPL-COMMANDS")
+    "Package which contains command functions."))
 
 @ To avoid cluttering the current package with interned command names,
 we'll read all command names with the command package as the current
@@ -169,10 +170,10 @@ occasion to use the set equality predicate later.
   t)
 
 @ At the \repl\ prompt, commands are distinguished from ordinary Lisp forms
-by looking at the first character available on standard input. If it is the
-same under~|eql| as any of the keys of the alist |*command-chars*|, then it
-is a {\it command character}, and the associated command name will be used
-to construct a compound form which calls that command. The default command
+by looking at the first character available on standard input. If it
+matches any of the keys of the alist |*command-chars*|, then it is a
+{\it command character}, and the associated command name will be used to
+construct a compound form which calls that command. The default command
 character has no associated name, and so the name will be read from the
 characters immediately following.
 
