@@ -159,12 +159,16 @@ properties.
   (do-commands (command commands)
     (push command commands)))
 
-@t This test also serves to exercise the |do-commands| macro.
+@t This test also serves to exercise the |do-commands| macro. We'll have
+occasion to use the set equality predicate later.
 
 @l
+(defun set-equalp (list-1 list-2 &rest args)
+  (null (apply #'set-exclusive-or list-1 list-2 args)))
+
 (deftest available-commands
   (with-temporary-commands (foo bar baz quux)
-    (null (set-exclusive-or (list foo bar baz quux) (available-commands))))
+    (set-equalp (list foo bar baz quux) (available-commands)))
   t)
 
 @ At the \repl\ prompt, commands are distinguished from ordinary Lisp forms
@@ -190,38 +194,41 @@ But we'll need a few helper functions before we define it, since we want to
 make command entry and recovery from errors as easy as possible for the user.
 
 For instance, we'll accept any unambiguous prefix of a defined command's
-name as a designator for that command. Since the list of defined commands
-is expected to be small (a few dozen, maybe), a simple linear search is
-fine here.
+name as a designator for that command. Exact matches are always considered
+unambiguous. Since the list of defined commands is expected to be small (a
+few dozen, maybe), a simple linear search is fine here.
 
 @l
-(defun string-prefix-or-equal-p (string1 string2)
-  (let ((length1 (length (string string1)))
-        (length2 (length (string string2))))
-    (and (>= length2 length1)
-         (let ((end (min length1 length2)))
-           (string-equal string1 string2 :end1 end :end2 end)))))
+(defun string-prefix-p (prefix string)
+  (let ((l (length (string prefix)))
+        (m (length (string string))))
+    (and (>= m l)
+         (let ((n (min l m)))
+           (string-equal prefix string :end1 n :end2 n)))))
 
 (defun match-commands (name &aux matches)
   (do-commands (command matches)
-    (when (string-prefix-or-equal-p name command)
-      (push command matches))))
+    (cond ((string-equal command name) (return (list command)))
+          ((string-prefix-p name command) (push command matches)))))
 
 @t@l
-(deftest string-prefix-or-equal-p
-  (values (string-prefix-or-equal-p "" "foo")
-          (string-prefix-or-equal-p "f" "foo")
-          (string-prefix-or-equal-p "foo" "foo")
-          (string-prefix-or-equal-p "foo-bar" "foo"))
+(deftest string-prefix-p
+  (values (string-prefix-p "" "foo")
+          (string-prefix-p "f" "foo")
+          (string-prefix-p "foo" "foo")
+          (string-prefix-p "foo-bar" "foo")
+          (string-prefix-p "abc" "foo"))
   t
   t
   t
+  nil
   nil)
 
 (deftest match-commands
   (with-temporary-commands (foo foo-bar foo-baz bar baz quux)
-    (null (set-exclusive-or (list foo foo-bar foo-baz)
-                            (match-commands "FOO"))))
+    (values (set-equalp (match-commands "FOO") (list foo))
+            (set-equalp (match-commands "FOO-") (list foo-bar foo-baz))))
+  t
   t)
 
 @ If a command can not be found---either because it does not name a valid
