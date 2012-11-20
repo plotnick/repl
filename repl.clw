@@ -807,10 +807,12 @@ are now pleasantly simple.
 
 @l
 (defcmd (env :command-char #\$) ((name (read-stringy-argument)))
+  "Look up and return the value of an environment variable."
   (posix-getenv name))
 
 (defcmd (shell :command-char #\!)
     ((command (string-trim '(#\Space #\Tab #\Newline) (slurp))))
+  "Execute a shell command."
   (let* ((shell (or (posix-getenv "SHELL") "/bin/sh"))
          (status (process-exit-code
                   (run-program shell (list "-c" command)
