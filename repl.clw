@@ -144,16 +144,13 @@ names.
   "FOO"
   t)
 
-@ In addition to living in the command package, command functions will
-always be exported and fbound. This makes finding them straightforward,
-since we'll assume that nothing {\it but\/} commands have all of those
-properties.
+@ All of the external symbols of the command package are taken to be command
+names.
 
 @l
 (defmacro do-commands ((var &optional result-form) &body body)
   `(do-external-symbols (,var *command-package* ,result-form)
-     (when (fboundp ,var)
-       ,@body)))
+     ,@body))
 
 (defun available-commands (&aux commands)
   (do-commands (command commands)
@@ -292,8 +289,7 @@ error is signaled.
                      (command-name condition) (command-matches condition)))))
 
 @t There are three main cases to test for |find-command|: successful lookup,
-unsuccessful lookup (with several causes), and lookup based on an ambiguous
-prefix.
+unsuccessful lookup, and lookup based on an ambiguous prefix.
 
 @l
 (deftest (find-command found)
@@ -302,23 +298,9 @@ prefix.
   t)
 
 (deftest (find-command not-found)
-  (with-temporary-commands (foo)
-    (flet ((command-not-found-p (command)
-             (handler-case (not (find-command command))
-               (command-not-found () t))))
-      (values
-       ;; Not fbound.
-       (command-not-found-p (intern "BAR"))
-
-       ;; Fbound, but not registered as a command.
-       (command-not-found-p (let ((baz (intern "BAZ")))
-                              (setf (symbol-function baz) #'identity)
-                              baz))
-
-       ;; Not even interned.
-       (command-not-found-p "QUUX"))))
-  t
-  t
+  (with-temporary-commands ()
+    (handler-case (not (find-command (intern "FOO")))
+      (command-not-found () t)))
   t)
 
 (deftest (find-command ambig)
@@ -355,6 +337,27 @@ Also note the abbreviation of the command name.
       (eq (run-command 'foo x) x)))
   t)
 
+@ We also support a notion of command aliases. The machinery is simple
+enough: aliases are non-fbound (but still external) symbols in the command
+package with the |alias| indicator on their plist set to another command
+name. Note that we do not check for alias loops, so don't do that.
+
+@l
+(defun resolve-aliases (name)
+  (do ((name name (get name 'alias)))
+      ((fboundp name) name)))
+
+@t@l
+(deftest resolve-aliases
+  (with-temporary-commands (foo bar baz)
+    (fmakunbound bar)
+    (fmakunbound baz)
+    (setf (get bar 'alias) foo)
+    (setf (get baz 'alias) bar)
+    (every (lambda (name) (eq (resolve-aliases name) foo))
+           (list foo bar baz)))
+  t)
+
 @ After a command name is read and its command function found, we'll
 immediately look for arguments to pass it. We could just use |read|,
 but we want to support various kinds of shortcut syntaxes, so we'll
@@ -381,9 +384,10 @@ it just calls~|read|.
 @l
 (defun read-form (*standard-input* *standard-output*)
   (handler-case
-      (cond (@<Is the first available character...@>
+      (cond (@<Is the first available character a command character?@>
              (read-char) ; discard command character
-             (let ((command (find-command (read-command-name))))
+             (let ((command (resolve-aliases ;
+                             (find-command (read-command-name)))))
                (cons command (collect-command-arguments command))))
             (t (read)))
     (end-of-file () @<Handle \eof\ on standard input@>)))
@@ -392,7 +396,7 @@ it just calls~|read|.
 stream back to column~0, the pretty-printer will start at some dynamic
 column number based on the length of the prompt string.
 
-@<Is the first available character a command character?@>=
+@<Is the first available char...@>=
 (prog1 (char= (peek-char t) *command-char*)
   (terpri))
 
@@ -492,12 +496,12 @@ Note that |invert-string| is its own inverse, and that each of them have
                     (equal (externalize-string input) external)))
   t)
 
-@ |defcmd| is the primary command defining form. Its surface syntax
-is identical to that of |defun|, and in fact it consists of little more
-than a wrapper around that macro. But the lambda list provided to |defcmd|
-is not an ordinary lambda list: it supports a special syntax for defining
-argument readers for the optional and required parameters of the command
-function.
+@ |defcmd| is the primary command defining form. Its surface syntax is
+similar to that of |defun|, and in fact it consists of little more than a
+wrapper around that macro. The primary difference is that the lambda list
+provided to |defcmd| is not an ordinary lambda list: it supports a special
+syntax for defining argument readers for the optional and required
+parameters of the command function.
 
 Our lambda list parsing routine returns two values: an ordinary lambda
 list containing all of the supplied parameter specifiers (including any
@@ -513,18 +517,34 @@ what you think it is, which means that in the body of a command defined
 using |(defcmd name)|, |(return-from name value)| probably won't do what
 you want.
 
+We also provide support for options: if |name| is a list, it must be of the
+form |(name options)|, where |options| is a plist of option/value pairs.
+Right now the only option we support is |:alias|, which sets up alternate
+names for the command, but we might support other options in the future.
+
 @l
 @<Define command lambda list parsing routine@>
 
-(defmacro defcmd (name lambda-list &body body)
+(defmacro defcmd (name-and-options lambda-list &body body)
   "Define a command for the top-level REPL."
-  (let ((name (intern (symbol-name name) *command-package*)))
-    (multiple-value-bind (params reader-forms) (parse-arg-readers lambda-list)
-      `(progn
-         (export ',name *command-package*)
-         (setf (get ',name 'arg-reader-functions) ;
-               (mapcar #'make-arg-reader '(,@reader-forms)))
-         (defun ,name ,params ,@body)))))
+  (flet ((command-name (name) (intern (symbol-name name) *command-package*)))
+    (destructuring-bind (name . options) (if (listp name-and-options) ;
+                                             name-and-options ;
+                                             (list name-and-options))
+      (let ((name (command-name name)))
+        (multiple-value-bind (params reader-forms) ;
+            (parse-arg-readers lambda-list)
+          `(progn
+             (export ',name *command-package*)
+             (setf (get ',name 'arg-reader-functions) ;
+                   (mapcar #'make-arg-reader '(,@reader-forms)))
+             (defun ,name ,params ,@body)
+             ,@(loop for (option value) on options by #'cddr
+                     if (eql option :alias)
+                       do (setq value (command-name value))
+                       collect `(export ',value *command-package*)
+                       collect `(pushnew ',value (get ',name 'aliases))
+                       collect `(setf (get ',value 'alias) ',name))))))))
 
 (defun make-arg-reader (form)
   (if form
@@ -621,18 +641,33 @@ We'll start with a sort of meta-command which provides help for the available
 commands.
 
 @l
-(defcmd help (&optional (name (internalize-string (read-stringy-argument nil))))
+(defcmd help (&optional (name (internalize-string (read-stringy-argument nil)))
+              &aux (command-list-format "~<~@{~A~^ ~:_~}~:>"))
   "Display help for commands."
   (let ((command (and name
-                      (handler-case (find-command name)
+                      (handler-case (resolve-aliases (find-command name))
                         (command-not-found (condition)
                           (format *command-output* "~A~%" condition))))))
-    (if command
-        (format *command-output* "~A: ~A" ;
-                command (documentation command 'function))
-        (format *command-output* "Available commands:~{ ~A~}."
-                (sort (available-commands) #'string<)))
+    (cond ((null command)
+           (format *command-output* "Commands: ~@?."
+                   command-list-format (sort (available-commands) #'string<)))
+          (t (format *command-output* "~A: ~A"
+                     command (or (documentation command 'function) ;
+                                 "No documentation available."))
+             (let ((aliases (get command 'aliases)))
+               (when aliases
+                 (format *command-output* "~&Aliases: ~@?."
+                         command-list-format (sort aliases #'string<))))))
     (values)))
+
+@ Commands to exit are handy, especially if you're working in a package
+that doesn't use the {\tt SB-EXT} package or if you can't remember the
+distinction between `exit' and~`quit'.
+
+@l
+(defcmd (exit :alias quit) ()
+  "Terminate the Lisp process."
+  (exit))
 
 @ We generally don't care about the working directory of the Lisp process,
 but being able to quickly switch |*default-pathname-defaults*| is handy.
