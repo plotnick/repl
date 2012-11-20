@@ -29,7 +29,7 @@ of its own.
            "UNUSE-REPL"
            "DEFCMD"
            "*COMMAND-OUTPUT*"
-           "*COMMAND-CHAR*"
+           "*COMMAND-CHARS*"
            "*COMMAND-PACKAGE*"
            "*IGNORE-EOF*"))
 @e
@@ -170,20 +170,17 @@ occasion to use the set equality predicate later.
 
 @ At the \repl\ prompt, commands are distinguished from ordinary Lisp forms
 by looking at the first character available on standard input. If it is the
-same under |char=| as the value of |*command-char*|---which we call,
-unsurprisingly, the {\it command character}---then the symbol named by the
-immediately following characters (i.e., what |read| returns starting just
-{\it after\/} the command character) is taken as a command name. The
-command character is {\it not\/} part of the command name; it just tells
-the reader that a command name follows.
+same under~|eql| as any of the keys of the alist |*command-chars*|, then it
+is a {\it command character}, and the associated command name will be used
+to construct a compound form which calls that command. The default command
+character has no associated name, and so the name will be read from the
+characters immediately following.
 
-The command character defaults to~`:', but many other characters would be
-suitable; e.g., `/', `${\char`\\}$', `!'. Really, any character except~`('
-that isn't commonly used at the beginning of a symbol name is probably fine.
+The default command character is~`:', but any character except~`(' that
+isn't commonly used at the beginning of a symbol name is probably fine.
 
 @<Global variables@>=
-(defvar *command-char* #\:
-  "Character that introduces a REPL command.")
+(defvar *command-chars* '((#\: . nil)))
 
 @ The primary lookup routine for commands is |find-command|, which takes a
 name and attempts to find and return the command function with that name.
@@ -250,7 +247,10 @@ from which this idea was taken, but that command does not also invoke the
 
 @l
 (defun slurp ()
-  (loop while (read-char-no-hang)))
+  (with-output-to-string (*standard-output*)
+    (loop with char
+          while (setq char (read-char-no-hang nil nil))
+          do (write-char char))))
 
 @ Here, then, is the definition of |find-command|. If there is exactly one
 command matching the given name, it is returned; otherwise, a correctable
@@ -376,29 +376,31 @@ command function's property list.
 
 @ We're now ready to define our main reader function, |read-form|. This
 function peeks at the first character on standard input, waiting if none
-is available. If it is the command character, it reads the command name
-which follows and returns a compound form with the command function's name
-in the |car| and the list of collected arguments in the~|cdr|. Otherwise,
-it just calls~|read|.
+is available. If it is a command character, it either uses the associated
+command or reads the command name which follows, then returns a compound
+form with the command function's name in the |car| and the list of
+collected arguments in the~|cdr|. Otherwise, it just calls~|read|.
 
 @l
 (defun read-form (*standard-input* *standard-output*)
   (handler-case
-      (cond (@<Is the first available character a command character?@>
-             (read-char) ; discard command character
-             (let ((command (resolve-aliases ;
-                             (find-command (read-command-name)))))
-               (cons command (collect-command-arguments command))))
-            (t (read)))
+      (let ((entry (assoc (peek-char t) *command-chars*)))
+        (cond ((consp entry)
+               (read-char) ; discard command character
+               @<Reset the output stream to column~0@>
+               (let ((command (resolve-aliases ;
+                               (find-command (or (cdr entry) ;
+                                                 (read-command-name))))))
+                 `(,command ,@(collect-command-arguments command))))
+              (t (read))))
     (end-of-file () @<Handle \eof\ on standard input@>)))
 
 @ Wart/flaw/the-universe-sucks: if we don't immediately force the output
 stream back to column~0, the pretty-printer will start at some dynamic
 column number based on the length of the prompt string.
 
-@<Is the first available char...@>=
-(prog1 (char= (peek-char t) *command-char*)
-  (terpri))
+@<Reset the output stream...@>=
+(fresh-line)
 
 @ Like SBCL's default form reader, we respect the venerable Unix convention
 of interpreting \eof\ as a request to exit the process. Unlike SBCL, however,
@@ -519,8 +521,6 @@ you want.
 
 We also provide support for options: if |name| is a list, it must be of the
 form |(name options)|, where |options| is a plist of option/value pairs.
-Right now the only option we support is |:alias|, which sets up alternate
-names for the command, but we might support other options in the future.
 
 @l
 @<Define command lambda list parsing routine@>
@@ -535,21 +535,39 @@ names for the command, but we might support other options in the future.
         (multiple-value-bind (params reader-forms) ;
             (parse-arg-readers lambda-list)
           `(progn
+             (defun ,name ,params ,@body)
              (export ',name *command-package*)
              (setf (get ',name 'arg-reader-functions) ;
                    (mapcar #'make-arg-reader '(,@reader-forms)))
-             (defun ,name ,params ,@body)
-             ,@(loop for (option value) on options by #'cddr
-                     if (eql option :alias)
-                       do (setq value (command-name value))
-                       collect `(export ',value *command-package*)
-                       collect `(pushnew ',value (get ',name 'aliases))
-                       collect `(setf (get ',value 'alias) ',name))))))))
+             ,@@<Process |defcmd| options for |name|@>))))))
 
 (defun make-arg-reader (form)
   (if form
       (coerce `(lambda () ,form) 'function)
       #'read-preserving-whitespace))
+
+@ As we process the command definition options, we accumulate forms to be
+included in the macro expansion.
+
+The |:alias| option sets up an alternate name for a command. The alias is
+made to be external in the command package, and we set its |alias| plist
+entry to the target command. We also establish a link the other way, by
+recording the new alias in the target command's |aliases| plist entry.
+
+The |:command-char| option is used to push a new pair onto the
+|*command-chars*| alist, which makes |read-form| recognize the given
+command character as a shortcut for this command.
+
+@<Process |defcmd| options...@>=
+(loop for (option value) on options by #'cddr
+      if (eql option :alias)
+        do (setq value (command-name value))
+        and collect `(export ',value *command-package*)
+        and collect `(setf (get ',value 'alias) ',name)
+        and collect `(pushnew ',value (get ',name 'aliases))
+      if (eql option :command-char)
+        collect `(pushnew (cons ,value ',name) *command-chars* ;
+                          :key #'car :test #'char=))
 
 @ The syntax of command lambda lists differs from that of ordinary lambda
 lists only in the required and optional parameter specifications. Required
@@ -783,6 +801,25 @@ are now pleasantly simple.
   (:documentation "Load a file."
    :prompt "Load file: "
    :function load))
+
+@ Shell commands.
+
+@l
+(defcmd (env :command-char #\$) ((name (read-stringy-argument)))
+  (posix-getenv name))
+
+(defcmd (shell :command-char #\!)
+    ((command (string-trim '(#\Space #\Tab #\Newline) (slurp))))
+  (let* ((shell (or (posix-getenv "SHELL") "/bin/sh"))
+         (status (process-exit-code
+                  (run-program shell (list "-c" command)
+                               :search t
+                               :wait t
+                               :output *command-output*
+                               :error *command-output*))))
+    (if (zerop status)
+        (values)
+        (error "Command \"~A\" exited with status ~D." shell status))))
 
 @*Index.
 @t*Index.
