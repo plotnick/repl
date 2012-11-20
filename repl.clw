@@ -440,42 +440,57 @@ return NIL."
 @ @<Condition classes@>=
 (define-condition unexpected-newline (error) ())
 
-@ Command arguments are frequently strings that denote Lisp objects whose
-names are internalized in some way, like package and symbol names. As a
-convenience to the user, we'll support reading such arguments with the same
-kind of case folding the Lisp reader gives us for symbol names.
+@ Command arguments frequently denote Lisp objects whose names are
+internalized in some way, like package, symbol, and file names. We'll
+case-fold such argument strings so that the user may be enter them in
+their system's customary case without quotation. See \S 19.2.2.1.2 of
+the Common Lisp standard (`Case in Pathname Components') for more on
+customary case.
 
-We provide three helper functions to handle this: |invert-string|,
-|internalize-string|, and~|externalize-string|. (This last is currently
-unused, but is provided for symmetry and for use by user-defined commands.)
-Note that |invert-string| is its own inverse.
+Note that |invert-string| is its own inverse, and that each of them have
+|nil| as a fixpoint.
 
 @l
-(defun invert-string (string &aux (string (string string)))
+(defun invert-string (string &aux (string (and string (string string))))
   "The universal translator for all your lettercase needs."
-  (cond ((every (lambda (character)
-                  (if (alpha-char-p character)
-                      (upper-case-p character)
+  (cond ((null string) nil)
+        ((every (lambda (character)
+                  (if (alpha-char-p character) ;
+                      (upper-case-p character) ;
                       t))
                 string)
          (string-downcase string))
         ((every (lambda (character)
-                  (if (alpha-char-p character)
-                      (lower-case-p character)
+                  (if (alpha-char-p character) ;
+                      (lower-case-p character) ;
                       t))
                 string)
          (string-upcase string))
         (t string)))
 
 (defun internalize-string (string &optional (customary-case :lower))
-  (ecase customary-case
-    (:lower (invert-string string))
-    (:upper (string string))))
+  (when string
+    (ecase customary-case
+      (:lower (invert-string string))
+      (:upper (string string)))))
 
 (defun externalize-string (string &optional (customary-case :upper))
-  (ecase customary-case
-    (:lower (invert-string string))
-    (:upper (string string))))
+  (when string
+    (ecase customary-case
+      (:lower (invert-string string))
+      (:upper (string string)))))
+
+@t@l
+(deftest internalize/externalize-string
+  (loop for (input internal external)
+        in '(("ZEBRA" "zebra" "ZEBRA")
+             ("Zebra" "Zebra" "Zebra")
+             ("zebra" "ZEBRA" "zebra")
+             ("" "" "")
+             (nil nil nil))
+        always (and (equal (internalize-string input) internal)
+                    (equal (externalize-string input) external)))
+  t)
 
 @ |defcmd| is the primary command defining form. Its surface syntax
 is identical to that of |defun|, and in fact it consists of little more
