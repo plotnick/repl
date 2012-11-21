@@ -25,8 +25,8 @@ of its own.
 @e
 (defpackage "REPL"
   (:use "COMMON-LISP"
-        #+sbcl "SB-EXT"
-        #+sbcl "SB-WALKER")
+        "SB-EXT"
+        "SB-WALKER")
   (:export "USE-REPL"
            "UNUSE-REPL"
            "DEFCMD"
@@ -690,18 +690,68 @@ distinction between `exit' and~`quit'.
   "Terminate the Lisp process."
   (exit))
 
-@ We generally don't care about the working directory of the Lisp process,
-but being able to quickly switch |*default-pathname-defaults*| is handy.
-This command ensures that its argument names a directory, even if the
-trailing slash is elided.
+@ Lisp programs usually use |*default-pathname-defaults*| to resolve
+relative file names, and so don't much care about the {\sc posix} current
+working directory. But it matters to any sub-processes we may spawn (even
+Lisp interpreters, since |*default-pathname-defaults*| is typically
+initialized from the current working directory), and so it's nice to keep
+them in sync.
 
 @l
-(defcmd cd (&optional (pathname (read-stringy-argument nil)))
-  "Set default pathname."
-  (setf *default-pathname-defaults*
-        (if pathname
-            (make-pathname :directory (pathname-directory (truename pathname)))
-            (user-homedir-pathname))))
+(defcmd cd (&optional (pathname (read-stringy-argument nil)) &aux
+            (pathname (if pathname
+                          (make-pathname :directory (pathname-directory ;
+                                                     (truename pathname)))
+                          (user-homedir-pathname))))
+  "Change the current working directory and set default pathname defaults."
+  (when (zerop (sb-posix:chdir pathname))
+    (setf *default-pathname-defaults* pathname)))
+
+(defcmd pwd ()
+  "Print the current working directory and default pathname defaults."
+  (format *command-output* "Current working directory: ~S.~%~
+                            Default pathname defaults: ~S."
+          (sb-posix:getcwd) *default-pathname-defaults*)
+  (values))
+
+@ Building on the |cd| command just defined, we can implement a simple
+directory stack {\it \'a~la\/} the C-shell. The directory stack always has
+|*default-pathname-defaults*| as its implicit top element.
+
+@l
+(defvar *dirs* '()
+  "The directory stack.")
+
+(defvar *pushd-silent* nil
+  "Print the directory stack after PUSHD and POPD.")
+
+(defun maybe-dirs ()
+  (unless *pushd-silent* (run-command 'dirs))
+  (values))
+
+(defcmd dirs ()
+  "Print the directory stack."
+  (format *command-output* "~{~A~^ ~}~%" ;
+          (cons *default-pathname-defaults* *dirs*))
+  (values))
+
+(defcmd pushd (&optional (pathname (or (read-stringy-argument nil) ;
+                                       (pop *dirs*))))
+  "Push the working directory onto the stack and change directories.
+If no pathname is given, exchange the current working directory and
+the top of the directory stack."
+  (let ((cwd *default-pathname-defaults*))
+    (run-command 'cd pathname)
+    (push cwd *dirs*))
+  (maybe-dirs))
+
+(defcmd popd ()
+  "Pop the topmost entry off the directory stack and make it the current
+working directory."
+  (cond (*dirs* (run-command 'cd (pop *dirs*))
+                (maybe-dirs))
+        (t (format *command-output* "Directory stack empty.~%")
+           (values))))
 
 @ |provide| and |require| may be deprecated, but they still win over most
 of the available alternatives.
