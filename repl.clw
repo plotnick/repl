@@ -24,9 +24,8 @@ of its own.
 (provide "REPL")
 @e
 (defpackage "REPL"
-  (:use "COMMON-LISP"
-        "SB-EXT"
-        "SB-WALKER")
+  (:use "COMMON-LISP" "SB-EXT" "SB-WALKER")
+  (:import-from "SB-POSIX" "CHDIR" "GETCWD")
   (:export "USE-REPL"
            "UNUSE-REPL"
            "DEFCMD"
@@ -704,14 +703,14 @@ them in sync.
                                                      (truename pathname)))
                           (user-homedir-pathname))))
   "Change the current working directory and set default pathname defaults."
-  (when (zerop (sb-posix:chdir pathname))
+  (when (zerop (chdir pathname))
     (setf *default-pathname-defaults* pathname)))
 
 (defcmd pwd ()
   "Print the current working directory and default pathname defaults."
   (format *command-output* "Current working directory: ~S.~%~
                             Default pathname defaults: ~S."
-          (sb-posix:getcwd) *default-pathname-defaults*)
+          (getcwd) *default-pathname-defaults*)
   (values))
 
 @ Building on the |cd| command just defined, we can implement a simple
