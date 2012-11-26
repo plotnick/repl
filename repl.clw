@@ -861,26 +861,61 @@ are now pleasantly simple.
    :prompt "Load file: "
    :function load))
 
-@ Shell commands.
+@ Next up is a command for running shell commands from Lisp. Some ideas
+and a tiny bit of code for this are taken from Xach's much more featureful
+`commando' system; these commands are pretty minimalist.
+
+We'll start with a few utility routines. The first,
+|stringify-command-argument|, takes a Lisp object and tries to coerce it
+to a string suitable as an argument to a Unix program.
+
+@l
+(defun stringify-command-argument (argument)
+  (typecase argument
+    (string argument)
+    (pathname (native-namestring argument))
+    (keyword (format nil "--~(~A~)" argument))
+    (t (princ-to-string argument))))
+
+@ The next one is just a simple wrapper around a synchronous call to
+|run-program|. It returns the command's exit code, which should generally
+be zero if the command was successful. But that's just a convention, and
+should not be relied upon.
+
+@l
+(defun run (command &rest args)
+  (process-exit-code
+   (run-program command (mapcar #'stringify-command-argument args)
+                :search t
+                :wait t
+                :output *command-output*
+                :error *command-output*)))
+
+@ Our shell command tries to be slightly clever by looking up the user's
+shell from the environment instead of just assuming {\tt /bin/sh}, but it
+does assume that whatever's listed there accepts the usual {\tt -c~command}
+invocation syntax, meaning, roughly, ``run whatever's in the string `command'
+as though it were entered directly on the command line''. In most shells,
+that means that word splitting will be applied, so embedded spaces and the
+like must be properly quoted.
+
+@l
+(defcmd (shell :command-char #\!)
+    ((command (string-trim '(#\Space #\Tab #\Newline) (slurp))))
+  "Execute a shell command."
+  (let* ((shell (or (posix-getenv "SHELL") "/bin/sh"))
+         (status (run shell "-c" command)))
+    (if (zerop status)
+        (values)
+        (error "Command \"~A\" exited with status ~D." shell status))))
+
+@ Here's a little command that fetches the value of an environment variable.
+Note the command character for quick lookup.
 
 @l
 (defcmd (env :command-char #\$) ((name (read-stringy-argument)))
   "Look up and return the value of an environment variable."
   (posix-getenv name))
-
-(defcmd (shell :command-char #\!)
-    ((command (string-trim '(#\Space #\Tab #\Newline) (slurp))))
-  "Execute a shell command."
-  (let* ((shell (or (posix-getenv "SHELL") "/bin/sh"))
-         (status (process-exit-code
-                  (run-program shell (list "-c" command)
-                               :search t
-                               :wait t
-                               :output *command-output*
-                               :error *command-output*))))
-    (if (zerop status)
-        (values)
-        (error "Command \"~A\" exited with status ~D." shell status))))
 
 @*Index.
 @t*Index.
