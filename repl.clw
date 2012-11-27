@@ -917,5 +917,36 @@ Note the command character for quick lookup.
   "Look up and return the value of an environment variable."
   (posix-getenv name))
 
+@ SBCL provides a variable, |sb-ext:*muffled-warnings*|, whose value is a
+type specifier. ``Whenever a warning is signaled,'' the SBCL manual says,
+``if the warning if of this type and is not handled by any other handler,
+it will be muffled.'' That's handy, especially considering how chatty SBCL's
+compiler and loader are, but is slightly inconvenient to use. It should
+have just been a list that you can just |push| onto.
+
+These two commands emulate that interface as best they are able. The first
+reads a symbol and treats it as a warning class to be pushed onto the list
+of muffled types. The second attempts to remove it from that list, but will
+fail if the type specifier is not any of the simple kinds that it can deal
+with (i.e., such as are created by |muffle-warnings|).
+
+@l
+(defcmd muffle-warnings ((warning `(quote ,(read))))
+  "Add the given class to the list of muffled warning types."
+  (setq *muffled-warnings*
+        (etypecase *muffled-warnings*
+          ((cons (eql or) list) `(or ,warning ,@(cdr *muffled-warnings*)))
+          (t `(or ,warning ,*muffled-warnings*)))))
+
+(defcmd unmuffle-warnings ((warning `(quote ,(read))))
+  "Remove the given class from the list of muffled warning types."
+  (setq *muffled-warnings*
+        (etypecase *muffled-warnings*
+          ((cons (eql or) list)
+           `(or ,@(delete warning (cdr *muffled-warnings*))))
+          (symbol (if (eql *muffled-warnings* warning) ;
+                      nil ;
+                      *muffled-warnings*)))))
+
 @*Index.
 @t*Index.
