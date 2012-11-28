@@ -23,6 +23,9 @@ of its own.
 @l
 (provide "REPL")
 @e
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (require "SB-POSIX"))
+@e
 (defpackage "REPL"
   (:use "COMMON-LISP" "SB-EXT" "SB-WALKER")
   (:import-from "SB-POSIX" "CHDIR" "GETCWD")
