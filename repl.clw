@@ -928,25 +928,85 @@ These two commands emulate that interface as best they are able. The first
 reads a symbol and treats it as a warning class to be pushed onto the list
 of muffled types. The second attempts to remove it from that list, but will
 fail if the type specifier is not any of the simple kinds that it can deal
-with (i.e., such as are created by |muffle-warnings|).
+with (i.e., such as are created by |muffle-warnings|). When invoked with no
+arguments, they return and reset the value of |sb-ext:*muffled-warnings*|,
+respectively.
 
 @l
-(defcmd muffle-warnings ((warning `(quote ,(read))))
-  "Add the given class to the list of muffled warning types."
-  (setq *muffled-warnings*
-        (etypecase *muffled-warnings*
-          ((cons (eql or) list) `(or ,warning ,@(cdr *muffled-warnings*)))
-          (t `(or ,warning ,*muffled-warnings*)))))
+(defmacro check-warning-type (warning)
+  `(assert (multiple-value-bind (subtype-p valid-p)
+               (subtypep ,warning 'warning)
+             (and valid-p subtype-p))
+           (,warning)
+           "Ought to specify a subtype of WARNING."))
 
-(defcmd unmuffle-warnings ((warning `(quote ,(read))))
-  "Remove the given class from the list of muffled warning types."
+(deftype or-type-specifier () '(cons (eql or) list))
+
+(defcmd muffle-warnings (&optional (warning (and (peek-to-newline) ;
+                                                 `(quote ,(read)))))
+  "Add the given class to muffled warnings type specifier.
+If no class is supplied, return the current type specifier.
+
+Some useful classes: STYLE-WARNING SB-KERNEL:REDEFINITION-WARNING"
+  (cond (warning
+         (check-warning-type warning)
+         (setq *muffled-warnings*
+               (typecase *muffled-warnings*
+                 (or-type-specifier ;
+                  `(or ,warning ,@(cdr *muffled-warnings*)))
+                 (t `(or ,warning ,*muffled-warnings*)))))
+        (t *muffled-warnings*)))
+
+(defvar *originally-muffled-warnings* *muffled-warnings*)
+
+(defcmd unmuffle-warnings (&optional (warning (and (peek-to-newline) ;
+                                                   `(quote ,(read)))))
+  "Remove the given class from the muffled warnings type specifier.
+If no class is supplied, reset the type to its original value."
   (setq *muffled-warnings*
-        (etypecase *muffled-warnings*
-          ((cons (eql or) list)
-           `(or ,@(delete warning (cdr *muffled-warnings*))))
-          (symbol (if (eql *muffled-warnings* warning) ;
-                      nil ;
-                      *muffled-warnings*)))))
+        (cond (warning
+               (check-warning-type warning)
+               (typecase *muffled-warnings*
+                 (or-type-specifier ;
+                  `(or ,@(delete warning (cdr *muffled-warnings*))))
+                 (symbol (if (eql *muffled-warnings* warning) ;
+                             nil ;
+                             *muffled-warnings*))))
+              (t *originally-muffled-warnings*))))
+
+@t@l
+(deftest muffle-warnings
+  (values (equalp (let ((*muffled-warnings* 'foo))
+                    (run-command 'muffle-warnings 'style-warning))
+                  '(or style-warning foo))
+          (equalp (let ((*muffled-warnings* '(or foo bar)))
+                    (run-command 'muffle-warnings 'style-warning))
+                  '(or style-warning foo bar))
+          (equalp (let ((*muffled-warnings* '(or foo bar baz)))
+                    (run-command 'muffle-warnings))
+                  '(or foo bar baz))
+          (handler-case (let ((*muffled-warnings* *muffled-warnings*))
+                          (run-command 'muffle-warnings 'error))
+            (error () t)))
+  t t t t)
+
+(deftest unmuffle-warnings
+  (values (equalp (let ((*muffled-warnings* 'style-warning))
+                    (run-command 'unmuffle-warnings 'style-warning))
+                  nil)
+          (equalp (let ((*muffled-warnings* '(or foo style-warning)))
+                    (run-command 'unmuffle-warnings 'style-warning))
+                  '(or foo))
+          (equalp (let ((*muffled-warnings* '(or foo bar baz)))
+                    (run-command 'unmuffle-warnings 'style-warning))
+                  '(or foo bar baz))
+          (equalp (let ((*muffled-warnings* '(or foo bar baz)))
+                    (run-command 'unmuffle-warnings))
+                  *originally-muffled-warnings*)
+          (handler-case (let ((*muffled-warnings* *muffled-warnings*))
+                          (run-command 'unmuffle-warnings 'error))
+            (error () t)))
+  t t t t t)
 
 @*Index.
 @t*Index.
