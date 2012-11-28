@@ -1,5 +1,4 @@
-repl.lisp
-repl-tests.lisp
+*.lisp
 *.fasl
 *.tex
 *.idx
