@@ -251,11 +251,9 @@ from which this idea was taken, but that command does not also invoke the
 |abort| restart).
 
 @l
-(defun slurp ()
+(defun snarf ()
   (with-output-to-string (*standard-output*)
-    (loop with char
-          while (setq char (read-char-no-hang nil nil))
-          do (write-char char))))
+    (loop (write-char (or (read-char-no-hang nil nil) (return))))))
 
 @ Here, then, is the definition of |find-command|. If there is exactly one
 command matching the given name, it is returned; otherwise, a correctable
@@ -275,9 +273,9 @@ error is signaled.
       :report "Specify a command name to use."
       :interactive prompt-for-command
       (return-from find-command value))
-    (slurp ()
+    (snarf ()
       :report "Abort command and discard remaining input."
-      :interactive slurp
+      :interactive (lambda () (snarf) nil)
       (abort))))
 
 @ @<Condition classes@>=
@@ -904,7 +902,7 @@ like must be properly quoted.
 
 @l
 (defcmd (shell :command-char #\!)
-    ((command (string-trim '(#\Space #\Tab #\Newline) (slurp))))
+    ((command (string-trim '(#\Space #\Tab #\Newline) (snarf))))
   "Execute a shell command."
   (let* ((shell (or (posix-getenv "SHELL") "/bin/sh"))
          (status (run shell "-c" command)))
