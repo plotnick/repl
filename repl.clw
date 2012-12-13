@@ -181,7 +181,7 @@ construct a compound form which calls that command. The default command
 character has no associated name, and so the name will be read from the
 characters immediately following.
 
-The default command character is~`:', but any character except~`(' that
+The default command character is~`:', but any character except~`(' that % )
 isn't commonly used at the beginning of a symbol name is probably fine.
 
 @<Global variables@>=
