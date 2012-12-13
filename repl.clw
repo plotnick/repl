@@ -615,7 +615,7 @@ available package nickname, followed by `$>$'.
 (defun prompt (*standard-output*)
   (format t "~&~A> "
           (first (sort (cons (package-name *package*) ;
-                             (package-nicknames *package*))
+                             (copy-list (package-nicknames *package*)))
                        #'< :key #'length))))
 
 @ Having defined our reader and prompt hooks, we're now ready to
