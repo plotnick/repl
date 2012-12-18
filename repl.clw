@@ -781,11 +781,17 @@ of the available alternatives.
       (setf *package* package)
       (error "No package named ~A exists." name)))
 
-@ These next two commands pretty-print the macro expansion of an implicitly
-quoted form. The second uses SBCL's code walker to do a full code walk,
-including macro expansion.
+@ These next three commands pretty-print the macro expansion of an
+implicitly quoted form. The first expands only once, the second expands
+until the form is no longer a macro call, and the third uses SBCL's code
+walker to do a complete macro expansion.
 
 @l
+(defcmd m1 ((form `(quote ,(read))))
+  "Pretty-print the first-level macro expansion of FORM."
+  (write (macroexpand-1 form) :stream *command-output* :escape t :pretty t)
+  (values))
+
 (defcmd macroexpand ((form `(quote ,(read))))
   "Pretty-print the macro expansion of FORM."
   (write (macroexpand form) :stream *command-output* :escape t :pretty t)
