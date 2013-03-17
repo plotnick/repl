@@ -648,9 +648,9 @@ silence all command output or redirect it to a file.
 (defvar *command-output* (make-synonym-stream '*standard-output*)
   "Output stream for REPL commands.")
 
-@*Basic commands. We're finally ready to start defining some actual commands.
-We'll start with a sort of meta-command which provides help for the available
-commands.
+@*Commands. We're finally ready to start defining some actual commands.
+We'll start with a sort of meta-command which provides help for the
+available commands.
 
 @l
 (defcmd help (&optional (name (internalize-string (read-stringy-argument nil)))
@@ -672,7 +672,18 @@ commands.
                          command-list-format (sort aliases #'string<))))))
     (values)))
 
-@ Commands to exit are handy, especially if you're working in a package
+@ Fast package switching is extremely useful.
+
+@l
+(defcmd package ((name (read-stringy-argument nil)) &aux
+                 (name (if name (internalize-string name) "COMMON-LISP-USER"))
+                 (package (find-package name)))
+  "Change the current package."
+  (if package
+      (setf *package* package)
+      (error "No package named ~A exists." name)))
+
+@ A command to exit Lisp is handy, especially if you're working in a package
 that doesn't use the {\tt SB-EXT} package or if you can't remember the
 distinction between `exit' and~`quit'.
 
@@ -681,12 +692,29 @@ distinction between `exit' and~`quit'.
   "Terminate the Lisp process."
   (exit))
 
-@ Lisp programs usually use |*default-pathname-defaults*| to resolve
-relative file names, and so don't much care about the {\sc posix} current
-working directory. But it matters to any sub-processes we may spawn (even
-Lisp interpreters, since |*default-pathname-defaults*| is typically
-initialized from the current working directory), and so it's nice to keep
-them in sync.
+@ |provide| and |require| may be deprecated, but they still win over most
+of the available alternatives.
+
+@l
+(defcmd reload ((name (read-stringy-argument)))
+  "Reload a module."
+  (let ((module (internalize-string name)))
+    (format *command-output* "~:[~;~&Module ~A loaded.~%~]"
+            (require module) module)))
+
+@ Traditional Unix names may be cryptic, but they have the virtue of brevity.
+
+@l
+(defcmd rm ((pathname (read-stringy-argument)))
+  "Delete a file."
+  (delete-file (pathname pathname)))
+
+@1*Working directory commands. Lisp programs generally rely on
+|*default-pathname-defaults*| to resolve relative file names, and so don't
+much care about the {\sc posix} current working directory. But it matters
+to any sub-processes we may spawn (even Lisp interpreters, since
+|*default-pathname-defaults*| is typically initialized from the current
+working directory), so it's nice to keep them in sync.
 
 @l
 (defcmd cd (&optional (pathname (read-stringy-argument nil)) &aux
@@ -744,38 +772,10 @@ working directory."
         (t (format *command-output* "Directory stack empty.~%")
            (values))))
 
-@ |provide| and |require| may be deprecated, but they still win over most
-of the available alternatives.
-
-@l
-(defcmd reload ((name (read-stringy-argument)))
-  "Reload a module."
-  (let ((module (internalize-string name)))
-    (format *command-output* "~:[~;~&Module ~A loaded.~%~]"
-            (require module) module)))
-
-@ @l
-(defcmd rm ((pathname (read-stringy-argument)))
-  "Delete a file."
-  (delete-file (pathname pathname)))
-
-@ Fast package switching is also useful.
-
-@l
-(defcmd package ((name (read-stringy-argument nil)) &aux
-                 (name (if name
-                           (internalize-string name)
-                           "COMMON-LISP-USER"))
-                 (package (find-package name)))
-  "Change the current package."
-  (if package
-      (setf *package* package)
-      (error "No package named ~A exists." name)))
-
-@ These next three commands pretty-print the macro expansion of an
-implicitly quoted form. The first expands only once, the second expands
-until the form is no longer a macro call, and the third uses SBCL's code
-walker to do a complete macro expansion.
+@1*Macro expansion commands. These next three commands pretty-print the
+macro expansion of an implicitly quoted form. The first expands only once,
+the second expands until the form is no longer a macro call, and the third
+uses SBCL's code walker to do a complete macro expansion.
 
 @l
 (defcmd m1 ((form `(quote ,(read))))
@@ -794,11 +794,11 @@ walker to do a complete macro expansion.
     (write (walk-form form) :stream *command-output* :escape t :pretty t))
   (values))
 
-@ Next we'll define a suite of commands that operate on files:
-load a file, compile a file, \etc. Since it's common to operate on
-the same file many times in a row, we'll define an argument reader
-function that caches the last value given in the command's plist.
-It can also prompt the user for a file name to use.
+@1*File loading and compilation commands. Next we'll define a suite of
+commands that operate on files: load a file, compile a file, \etc. Since
+it's common to operate on the same file many times in a row, we'll define
+an argument reader function that caches the last value given in the
+command's plist. It can also prompt the user for a file name to use.
 
 @l
 (defun read-pathname-argument (command &optional prompt)
@@ -829,8 +829,8 @@ to look for a cached value.
   "foo"
   "foo")
 
-@ Single-function commands that operate on a single pathname argument
-are fairly common, we'll define a little defining form just for them.
+@ Commands that operate on a single pathname argument are fairly common,
+so we'll define a little defining form just for them.
 
 @l
 (defmacro define-simple-file-command (name (&key documentation
@@ -845,7 +845,7 @@ for a file name."
      ,@(if documentation (list documentation) nil)
      (,function (pathname pathname))))
 
-@ These are probably the most commonly used commands, but their definitions
+@ These are among the most commonly used commands, but their definitions
 are now pleasantly simple.
 
 @l
@@ -859,9 +859,9 @@ are now pleasantly simple.
    :prompt "Load file: "
    :function load))
 
-@ Next up is a command for running shell commands from Lisp. Some ideas
-and a tiny bit of code for this are taken from Xach's much more featureful
-`commando' system; these commands are pretty minimalist.
+@1*Shell commands. Next up is a command for running shell commands from
+Lisp. Some ideas and a tiny bit of code for this are taken from Xach's much
+more featureful `commando' system; these commands are pretty minimalist.
 
 We'll start with a few utility routines. The first,
 |stringify-command-argument|, takes a Lisp object and tries to coerce it
@@ -915,12 +915,13 @@ Note the command character for quick lookup.
   "Look up and return the value of an environment variable."
   (posix-getenv name))
 
-@ SBCL provides a variable, |sb-ext:*muffled-warnings*|, whose value is a
-type specifier. ``Whenever a warning is signaled,'' the SBCL manual says,
-``if the warning if of this type and is not handled by any other handler,
-it will be muffled.'' That's handy, especially considering how chatty SBCL's
-compiler and loader are, but is slightly inconvenient to use. It should
-have just been a list that you can just |push| onto.
+@1*Warning muffling commands. SBCL provides a variable,
+|sb-ext:*muffled-warnings*|, whose value is a type specifier. ``Whenever a
+warning is signaled,'' the SBCL manual says, ``if the warning i[s] of this
+type and is not handled by any other handler, it will be muffled.'' That's
+handy, especially considering how chatty SBCL's compiler and loader are,
+but is slightly inconvenient to use. It should have just been a list that
+you can just |push| onto.
 
 These two commands emulate that interface as best they are able. The first
 reads a symbol and treats it as a warning class to be pushed onto the list
@@ -1006,7 +1007,7 @@ If no class is supplied, reset the type to its original value."
             (error () t)))
   t t t t t)
 
-@*\rt\ commands. \rt\ doesn't have that many interface functions; we'll
+@1*Test commands. \rt\ doesn't have that many interface functions; we'll
 give most of them dedicated commands.
 
 @ Test names are symbols, and default to the current value of |*test*|.
@@ -1039,7 +1040,7 @@ give most of them dedicated commands.
   "Remove all tests."
   (rem-all-tests))
 
-@*Thread wrangling commands. Right now, we just provide a few trivial
+@1*Thread wrangling commands. Right now, we just provide a few trivial
 wrappers around the most commonly used administrative threading functions.
 
 @l
