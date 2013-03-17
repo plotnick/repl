@@ -4,6 +4,7 @@
 \def\etc.{{\it \char`&c.\spacefactor1000}}
 \def\eof{{\sc eof}}
 \def\repl{{\sc repl}}
+\def\rt{{\sc rt}}
 
 @*REPL. This module provides a command-line interface designed to sit atop
 an interactive, top-level |read-eval-print| loop (\repl). It is based on
@@ -24,10 +25,11 @@ of its own.
 (provide "REPL")
 @e
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (require "SB-POSIX"))
+  (require "SB-POSIX")
+  (require "SB-RT"))
 @e
 (defpackage "REPL"
-  (:use "COMMON-LISP" "SB-EXT" "SB-WALKER")
+  (:use "COMMON-LISP" "SB-EXT" "SB-RT" "SB-WALKER")
   (:import-from "SB-POSIX" "CHDIR" "GETCWD")
   (:export "USE-REPL"
            "UNUSE-REPL"
@@ -40,23 +42,12 @@ of its own.
 (in-package "REPL")
 
 @t*Test suite. The test suite for this system uses Richard Waters's
-{\sc rt} library. For more information on {\sc rt}, see Richard C.~Waters,
+\rt\ library. For more information on \rt, see Richard C.~Waters,
 ``Supporting the Regression Testing of Lisp Programs,''
 {\it SIGPLAN Lisp Pointers}~4, no.~2 (1991): 47--53.
 
-We use the sleazy trick of manually importing the external symbols of
-the {\sc rt} package instead of the more sensible |(use-package "RT")|
-because many compilers issue warnings when the use-list of a package
-changes, which would occur if the |defpackage| form above were evaluated
-after the tests have been loaded.
-
 @l
 (in-package "REPL")
-@e
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (require 'sb-rt)
-  (do-external-symbols (symbol (find-package "SB-RT"))
-    (import symbol)))
 
 @ We'll define our global variables and condition classes as we need them,
 but we'd like them to appear near the top of the tangled output.
@@ -1014,6 +1005,39 @@ If no class is supplied, reset the type to its original value."
                           (run-command 'unmuffle-warnings 'error))
             (error () t)))
   t t t t t)
+
+@*\rt\ commands. \rt\ doesn't have that many interface functions; we'll
+give most of them dedicated commands.
+
+@ Test names are symbols, and default to the current value of |*test*|.
+
+@l
+(defun read-test-name ()
+  (if (peek-to-newline) (read) *test*))
+
+@ The commands themselves are just trivial wrappers around the top-level
+\rt\ commands.
+
+@l
+(defcmd (do-test :alias dt) (&optional (name `(quote ,(read-test-name))))
+  "Do one test (defaults to *TEST*)."
+  (do-test name))
+
+(defcmd (do-tests :alias dts) ()
+  "Do all tests."
+  (do-tests))
+
+(defcmd pending-tests ()
+  "Get pending tests."
+  (pending-tests))
+
+(defcmd rem-test (&optional (name `(quote ,(read-test-name))))
+  "Remove one test (defaults to *TEST*)."
+  (rem-test name))
+
+(defcmd rem-all-tests ()
+  "Remove all tests."
+  (rem-all-tests))
 
 @*Index.
 @t*Index.
