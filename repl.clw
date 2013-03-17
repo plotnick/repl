@@ -8,7 +8,7 @@
 \def\rt{{\sc rt}}
 
 @*REPL. This module provides a command-line interface designed to sit atop
-an interactive, top-level |read-eval-print| loop (\repl). It is based on
+an interactive, top-level read-eval-print loop (\repl). It is based on
 {\tt RKREPL} by Richard~M. Kreuter \<kreuter@@progn.net>, but has diverged
 quite a bit in detail, if not in spirit.
 
@@ -18,7 +18,7 @@ input into Lisp forms to be evaluated---but only sometimes by calling |read|
 directly. It currently supports only SBCL, although it should be relatively
 easy to port to other Lisp implementations that support similar \repl\ hooks.
 It was also designed to be used in conjunction with an interface that includes
-a facility for remembering and recalling user input (e.g., |inferior-lisp|
+a facility for remembering and recalling user input (e.g., inferior-lisp
 or something similar), and so does not attempt to provide a history mechanism
 of its own.
 
@@ -166,16 +166,17 @@ occasion to use the set equality predicate later.
     (set-equalp (list foo bar baz quux) (available-commands)))
   t)
 
-@ At the \repl\ prompt, commands are distinguished from ordinary Lisp forms
-by looking at the first character available on standard input. If it
-matches any of the keys of the alist |*command-chars*|, then it is a
-{\it command character}, and the associated command name will be used to
-construct a compound form which calls that command. The default command
+@ At the \repl\ prompt, commands are distinguished from ordinary Lisp
+forms by looking at the first character available on standard input.
+If it matches any of the keys of the alist |*command-chars*|, then it is
+a {\it command character}, and the associated command name will be used
+to construct a compound form which calls that command. The default command
 character has no associated name, and so the name will be read from the
 characters immediately following.
 
-The default command character is~`:', but any character except~`(' that % )
-isn't commonly used at the beginning of a symbol name is probably fine.
+The default command character is colon, but any character (except a left
+parenthesis) that isn't commonly used at the beginning of a symbol name is
+probably fine.
 
 @<Global variables@>=
 (defvar *command-chars* '((#\: . nil)))
