@@ -29,7 +29,7 @@ of its own.
   (require "SB-RT"))
 @e
 (defpackage "REPL"
-  (:use "COMMON-LISP" "SB-EXT" "SB-RT" "SB-WALKER")
+  (:use "COMMON-LISP" "SB-EXT" "SB-RT" "SB-THREAD" "SB-WALKER")
   (:import-from "SB-POSIX" "CHDIR" "GETCWD")
   (:export "USE-REPL"
            "UNUSE-REPL"
@@ -1038,6 +1038,18 @@ give most of them dedicated commands.
 (defcmd rem-all-tests ()
   "Remove all tests."
   (rem-all-tests))
+
+@*Thread wrangling commands. Right now, we just provide a few trivial
+wrappers around the most commonly used administrative threading functions.
+
+@l
+(defcmd lt ()
+  "List the live threads."
+  (list-all-threads))
+
+(defcmd (release-foreground :alias bg) ()
+  "Background the current thread."
+  (release-foreground))
 
 @*Index.
 @t*Index.
