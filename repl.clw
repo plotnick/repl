@@ -1,8 +1,9 @@
 % -*- mode: CLWEB -*-
 \font\sc=cmcsc10
 \def\<#1>{\leavevmode\hbox{$\mkern-2mu\langle${\it #1\/}$\rangle$}}
-\def\etc.{{\it \char`&c.\spacefactor1000}}
+\def\CLWEB{{\tt CLWEB}}
 \def\eof{{\sc eof}}
+\def\etc.{{\it \char`&c.\spacefactor1000}}
 \def\repl{{\sc repl}}
 \def\rt{{\sc rt}}
 
@@ -25,11 +26,12 @@ of its own.
 (provide "REPL")
 @e
 (eval-when (:compile-toplevel :load-toplevel :execute)
+  (require "CLWEB")
   (require "SB-POSIX")
   (require "SB-RT"))
 @e
 (defpackage "REPL"
-  (:use "COMMON-LISP" "SB-EXT" "SB-RT" "SB-THREAD" "SB-WALKER")
+  (:use "COMMON-LISP" "CLWEB" "SB-EXT" "SB-RT" "SB-THREAD" "SB-WALKER")
   (:import-from "SB-POSIX" "CHDIR" "GETCWD")
   (:export "USE-REPL"
            "UNUSE-REPL"
@@ -858,6 +860,31 @@ are now pleasantly simple.
   (:documentation "Load a file."
    :prompt "Load file: "
    :function load))
+
+@1*\CLWEB\ commands. The are just trivial wrappers around the top-level
+\CLWEB\ functions.
+
+@l
+(define-simple-file-command lw
+  (:documentation "Load a web."
+   :prompt "Load web: "
+   :function load-web))
+
+(define-simple-file-command tf
+  (:documentation "Tangle a web."
+   :prompt "Tangle web: "
+   :function tangle-file))
+
+(define-simple-file-command weave
+  (:documentation "Weave a web."
+   :prompt "Weave web: "
+   :function weave))
+
+(defcmd wt ((pathname (read-pathname-argument 'weave "Weave & TeX web: ")))
+  "Weave and then TeX a web."
+  (let ((tex-file (weave pathname)))
+    (when tex-file
+      (run "tex" tex-file))))
 
 @1*Shell commands. Next up is a command for running shell commands from
 Lisp. Some ideas and a tiny bit of code for this are taken from Xach's much
