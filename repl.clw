@@ -26,6 +26,7 @@ of its own.
 (provide "REPL")
 @e
 (eval-when (:compile-toplevel :load-toplevel :execute)
+  (require "ASDF")
   (require "CLWEB")
   (require "SB-POSIX")
   (require "SB-RT"))
@@ -1079,6 +1080,26 @@ wrappers around the most commonly used administrative threading functions.
 (defcmd (release-foreground :alias bg) ()
   "Background the current thread."
   (release-foreground))
+
+@1*ASDF commands. Right now, we provide a single command which wraps
+|asdf:operate|. Both operation and system names should be entered without
+quotes, and the usual \.{-OP} suffix may be elided from operation names.
+
+@l
+(defun find-asdf-operation (operation)
+  (or (find-symbol (concatenate 'string operation "-OP") "ASDF")
+      (find-symbol (concatenate 'string operation "-OP") *package*)
+      (find-symbol operation "ASDF")
+      (find-symbol operation *package*)
+      (error "Unknown ASDF operation ~S." operation)))
+
+(defun read-asdf-operation ()
+  (find-asdf-operation (internalize-string (read-stringy-argument))))
+
+(defcmd asdf ((op `(quote ,(read-asdf-operation))) ;
+              (system (read-stringy-argument)))
+  "Operate on an ASDF system."
+  (asdf:operate op system))
 
 @*Index.
 @t*Index.
