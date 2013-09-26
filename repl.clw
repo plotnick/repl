@@ -964,11 +964,10 @@ respectively.
 
 @l
 (defmacro check-warning-type (warning)
-  `(assert (multiple-value-bind (subtype-p valid-p)
-               (subtypep ,warning 'warning)
+  `(assert (multiple-value-bind (subtype-p valid-p) (subtypep ,warning 'warning)
              (and valid-p subtype-p))
            (,warning)
-           "Ought to specify a subtype of WARNING."))
+           ,(load-time-value "~A is not a subtype of WARNING." t) ,warning))
 
 (deftype or-type-specifier () '(cons (eql or) list))
 
