@@ -37,6 +37,7 @@ of its own.
   (:export "USE-REPL"
            "UNUSE-REPL"
            "DEFCMD"
+           "RUN-COMMAND"
            "*COMMAND-OUTPUT*"
            "*COMMAND-CHARS*"
            "*COMMAND-PACKAGE*"
@@ -322,6 +323,7 @@ machinery of |find-command|.
 
 @l
 (defun run-command (name &rest args)
+  "Invoke the REPL command NAME with the given ARGS."
   (apply (find-command name) args))
 
 @t This test relies on the fact that the commands defined by
