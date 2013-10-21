@@ -446,6 +446,19 @@ return NIL."
 @ @<Condition classes@>=
 (define-condition unexpected-newline (error) ())
 
+@ Some commands want to read as a literal (quoted) form, so that the user
+doesn't even have to type the \.{'}. But some forms {\it should\/} be
+evaluated. In particular, we usually want to refer to the {\it values\/}
+of special variables, especially the `\repl\ vars' |-|, |+|, |*|, |/|,
+and~their variants.
+
+@l
+(defun read-maybe-quoted ()
+  (let ((form (read)))
+    (if (and (symbolp form) (boundp form))
+        form
+        `(quote ,form))))
+
 @ Command arguments frequently denote Lisp objects whose names are
 internalized in some way, like package, symbol, and file names. We'll
 case-fold such argument strings so that the user may be enter them in
@@ -784,17 +797,17 @@ the second expands until the form is no longer a macro call, and the third
 uses SBCL's code walker to do a complete macro expansion.
 
 @l
-(defcmd m1 ((form `(quote ,(read))))
+(defcmd m1 ((form (read-maybe-quoted)))
   "Pretty-print the first-level macro expansion of FORM."
   (write (macroexpand-1 form) :stream *command-output* :escape t :pretty t)
   (values))
 
-(defcmd macroexpand ((form `(quote ,(read))))
+(defcmd macroexpand ((form (read-maybe-quoted)))
   "Pretty-print the macro expansion of FORM."
   (write (macroexpand form) :stream *command-output* :escape t :pretty t)
   (values))
 
-(defcmd walk ((form `(quote ,(read))))
+(defcmd walk ((form (read-maybe-quoted)))
   "Pretty print the full macro expansion FORM."
   (let ((*walk-form-expand-macros-p* t))
     (write (walk-form form) :stream *command-output* :escape t :pretty t))
