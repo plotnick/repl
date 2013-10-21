@@ -878,6 +878,17 @@ are now pleasantly simple.
    :prompt "Load file: "
    :function load))
 
+@1*Debugging commands. We'll start with some introspection commands.
+
+@l
+(defcmd describe ((object (read)))
+  "Print a description of an object."
+  (describe object *command-output*))
+
+(defcmd inspect ((object (read)))
+  "Interactively inspect an object."
+  (inspect object))
+
 @1*\CLWEB\ commands. The are just trivial wrappers around the top-level
 \CLWEB\ functions.
 
