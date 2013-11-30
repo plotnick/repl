@@ -889,6 +889,17 @@ are now pleasantly simple.
   "Interactively inspect an object."
   (inspect object))
 
+@ The |disassemble| function takes an extended function designator or a
+|lambda|-expression, but we go even further here: anything else is assumed
+to be the body of a zero-argument function.
+
+@l
+(defcmd disassemble ((fn (read-maybe-quoted)))
+  "Disassemble compiled code."
+  (disassemble (typecase fn
+                 ((or function symbol (cons (member lambda setf))) fn)
+                 (t `(lambda () ,fn)))))
+
 @1*\CLWEB\ commands. The are just trivial wrappers around the top-level
 \CLWEB\ functions.
 
