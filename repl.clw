@@ -33,6 +33,7 @@ of its own.
 @e
 (defpackage "REPL"
   (:use "COMMON-LISP" "CLWEB" "SB-EXT" "SB-RT" "SB-THREAD" "SB-WALKER")
+  (:import-from "SB-MOP" "METHOD-GENERIC-FUNCTION" "REMOVE-METHOD")
   (:import-from "SB-POSIX" "CHDIR" "GETCWD")
   (:export "USE-REPL"
            "UNUSE-REPL"
@@ -899,6 +900,15 @@ to be the body of a zero-argument function.
   (disassemble (typecase fn
                  ((or function symbol (cons (member lambda setf))) fn)
                  (t `(lambda () ,fn)))))
+
+@ When a |defmethod| form is evaluated, the method metaobject ends up in |*|.
+That makes it an easy target for removal from its generic function, a fairly
+commonly needed operation when developing {\sc clos}-heavy code.
+
+@l
+(defcmd (remove-method :alias rmm) (&optional (method (read-maybe-quoted)))
+  "Remove a method from the generic function to which it belongs."
+  (remove-method (method-generic-function method) method))
 
 @1*\CLWEB\ commands. The are just trivial wrappers around the top-level
 \CLWEB\ functions.
