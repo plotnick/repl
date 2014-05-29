@@ -1095,6 +1095,10 @@ give most of them dedicated commands.
 \rt\ commands.
 
 @l
+(defcmd (continue-testing :alias ct) ()
+  "Continue with pending tests."
+  (continue-testing))
+
 (defcmd (do-test :alias dt) (&optional (name `(quote ,(read-test-name))))
   "Do one test (defaults to *TEST*)."
   (do-test name))
